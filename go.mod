@@ -7,7 +7,7 @@ require (
 	cloud.google.com/go/bigquery v1.85.0
 	cloud.google.com/go/pubsub v1.51.1
 	contrib.go.opencensus.io/exporter/stackdriver v0.13.14
-	github.com/aws/aws-sdk-go-v2/service/sqs v1.52.1
+	github.com/aws/aws-sdk-go-v2/service/sqs v1.52.2
 	github.com/go-openapi/swag/cmdutils v0.29.2
 	github.com/go-openapi/swag/jsonutils v0.29.2
 	github.com/go-openapi/swag/netutils v0.29.2
@@ -118,7 +118,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.33.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.0 // indirect
-	github.com/aws/smithy-go v1.28.2
+	github.com/aws/smithy-go v1.28.4
 	github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
 	github.com/bombsimon/logrusr/v2 v2.0.1 // indirect
 	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0 // indirect
@@ -166,7 +166,7 @@ require (
 	github.com/go-openapi/loads v0.25.3
 	github.com/go-openapi/runtime v0.33.3
 	github.com/go-openapi/spec v1.0.1
-	github.com/go-openapi/strfmt v0.27.2
+	github.com/go-openapi/strfmt v0.27.3
 	github.com/go-openapi/validate v1.0.0
 	github.com/go-restruct/restruct v1.2.0-alpha // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
