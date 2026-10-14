@@ -261,6 +261,38 @@ func init() {
           }
         }
       }
+    },
+    "/version": {
+      "get": {
+        "description": "Reports the scorecard-infra release and commit this server was built from, and the workflow parser that verifies uploads. Cached by the CDN for the TTL in the response's Surrogate-Control header.",
+        "tags": [
+          "version"
+        ],
+        "summary": "Get the build this server is running",
+        "operationId": "getVersion",
+        "responses": {
+          "200": {
+            "description": "The server's build information",
+            "schema": {
+              "$ref": "#/definitions/VersionInfo"
+            },
+            "headers": {
+              "Cache-Control": {
+                "type": "string",
+                "description": "TTL for browser caching. Example: max-age=3600"
+              },
+              "Surrogate-Control": {
+                "type": "string",
+                "description": "TTL for Fastly CDN caching. Example: max-age=3600"
+              },
+              "Surrogate-Key": {
+                "type": "string",
+                "description": "Surrogate key for Fastly CDN purging."
+              }
+            }
+          }
+        }
+      }
     }
   },
   "definitions": {
@@ -401,6 +433,26 @@ func init() {
         "tlogIndex": {
           "type": "integer",
           "x-order": 3
+        }
+      }
+    },
+    "VersionInfo": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "description": "scorecard-infra release, or git describe output for other builds",
+          "type": "string",
+          "x-order": 0
+        },
+        "commit": {
+          "description": "scorecard-infra commit the server was built from",
+          "type": "string",
+          "x-order": 1
+        },
+        "parser": {
+          "description": "Module and version of the workflow parser used to verify uploads",
+          "type": "string",
+          "x-order": 2
         }
       }
     }
@@ -638,6 +690,38 @@ func init() {
           }
         }
       }
+    },
+    "/version": {
+      "get": {
+        "description": "Reports the scorecard-infra release and commit this server was built from, and the workflow parser that verifies uploads. Cached by the CDN for the TTL in the response's Surrogate-Control header.",
+        "tags": [
+          "version"
+        ],
+        "summary": "Get the build this server is running",
+        "operationId": "getVersion",
+        "responses": {
+          "200": {
+            "description": "The server's build information",
+            "schema": {
+              "$ref": "#/definitions/VersionInfo"
+            },
+            "headers": {
+              "Cache-Control": {
+                "type": "string",
+                "description": "TTL for browser caching. Example: max-age=3600"
+              },
+              "Surrogate-Control": {
+                "type": "string",
+                "description": "TTL for Fastly CDN caching. Example: max-age=3600"
+              },
+              "Surrogate-Key": {
+                "type": "string",
+                "description": "Surrogate key for Fastly CDN purging."
+              }
+            }
+          }
+        }
+      }
     }
   },
   "definitions": {
@@ -792,6 +876,26 @@ func init() {
         "tlogIndex": {
           "type": "integer",
           "x-order": 3
+        }
+      }
+    },
+    "VersionInfo": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "description": "scorecard-infra release, or git describe output for other builds",
+          "type": "string",
+          "x-order": 0
+        },
+        "commit": {
+          "description": "scorecard-infra commit the server was built from",
+          "type": "string",
+          "x-order": 1
+        },
+        "parser": {
+          "description": "Module and version of the workflow parser used to verify uploads",
+          "type": "string",
+          "x-order": 2
         }
       }
     }

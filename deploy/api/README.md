@@ -102,6 +102,14 @@ tofu apply
 
 `image` and `origin_hostname` have no defaults and must be supplied.
 
+After an apply, confirm the build that is serving. Fastly caches `/version`
+under the `scorecard-version` surrogate key (TTL in
+`api/app/server/version.go`), so purge that key or wait out the TTL first.
+
+```sh
+curl -s https://api.scorecard.dev/version
+```
+
 ## Staging reads production's data and cannot write to it
 
 Both environments point at the same corpus buckets, because conformance against
