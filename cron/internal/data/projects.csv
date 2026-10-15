@@ -528142,6 +528142,7 @@ github.com/finos-fo/finos-fo.github.io,num_dependents_deps.dev:0
 github.com/finos-voice/greenkey-asrtoolkit,
 github.com/finos/FDC3,num_dependents_deps.dev:0
 github.com/finos/datahub,
+github.com/finos/git-proxy,
 github.com/finos/legend-studio,num_dependents_deps.dev:364
 github.com/finos/morphir-jvm,num_dependents_deps.dev:0
 github.com/finos/openfin-react-hooks,
