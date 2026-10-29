@@ -25,6 +25,15 @@ spec:
       labels:
         app.kubernetes.io/name: scorecard-nats
         app.kubernetes.io/part-of: scorecard-infra
+      annotations:
+        # Keep NATS OUT of the Istio mesh. NATS speaks first on connect,
+        # which deadlocks against sidecar mTLS interception (clients hit an
+        # i/o timeout dialing 4222). The broker carries only internal queue
+        # traffic and needs no mTLS; the paired DestinationRule
+        # (cron-nats-istio.yaml) tells mesh clients to dial it in plaintext.
+        # Minimal and robust vs. fighting native-sidecar iptables excludes
+        # (golden rule 2).
+        sidecar.istio.io/inject: "false"
     spec:
       securityContext:
         runAsNonRoot: true

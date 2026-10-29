@@ -30,6 +30,13 @@ spec:
       labels:
         app.kubernetes.io/name: scorecard-batch-worker
         app.kubernetes.io/part-of: scorecard-infra
+      annotations:
+        # NATS speaks first on connect, which deadlocks against the Istio
+        # sidecar's mTLS interception (worker -> nats 4222 i/o timeout).
+        # Exclude the NATS port from outbound interception so the client
+        # talks plain TCP to the in-cluster broker. Minimal carve-out; all
+        # other egress still goes through the sidecar. (golden rule 2)
+        traffic.sidecar.istio.io/excludeOutboundPorts: "4222"
     spec:
       serviceAccountName: scorecard-batch-worker
       securityContext:

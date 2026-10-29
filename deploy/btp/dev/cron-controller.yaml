@@ -21,6 +21,12 @@ spec:
   jobTemplate:
     spec:
       template:
+        metadata:
+          annotations:
+            # NATS speaks first on connect; exclude its port from the Istio
+            # sidecar's outbound interception so the publisher talks plain
+            # TCP to the broker (same carve-out as the worker). golden rule 2.
+            traffic.sidecar.istio.io/excludeOutboundPorts: "4222"
         spec:
           restartPolicy: Never
           serviceAccountName: scorecard-batch-controller

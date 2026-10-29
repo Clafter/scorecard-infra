@@ -20,6 +20,15 @@ resources:
   - api-service.yaml
   - api-apirule.yaml
   - api-networkpolicy.yaml
+  # Cron pipeline (deploy-kyma-cron). The ConfigMap is NOT listed here: it
+  # is rendered from the binding secret by apply-cron.sh. Apply the baseline
+  # with `kubectl apply -k`, then run apply-cron.sh to render + apply the
+  # config and the workloads below pick it up.
+  - cron-nats.yaml
+  - cron-nats-istio.yaml
+  - cron-rbac.yaml
+  - cron-controller.yaml
+  - cron-worker.yaml
 
 # labels (not commonLabels): includeSelectors:false keeps these out of
 # Deployment/Service selectors, which are immutable once set.
