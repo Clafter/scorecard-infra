@@ -1,0 +1,31 @@
+# Namespace for the scorecard-infra BTP dev deployment.
+#
+# istio-injection=enabled opts this namespace into Kyma's Istio mesh so
+# APIRule (added in deploy-kyma-api) can route traffic to pods here.
+#
+# No NetworkPolicy here — see design.md K7. The egress surface is only
+# knowable once the first workload is in; deploy-kyma-api owns the
+# policy.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: scorecard-infra-dev
+  labels:
+    app.kubernetes.io/part-of: scorecard-infra
+    environment: dev
+    istio-injection: enabled
+---
+# Quota sized for the API + a handful of cron pods. Revisit when the
+# first workload lands and we have real resource numbers.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: scorecard-infra-dev-quota
+  namespace: scorecard-infra-dev
+spec:
+  hard:
+    pods: "20"
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "4"
+    limits.memory: 8Gi

@@ -1,196 +1,197 @@
 # Design: deploy-kyma-baseline
 
 Decision records for the BTP/Kyma baseline. The records are numbered **K1**
-onwards and mirror the style of `provision-aws` (`A1`–`A16`): each one is a
+onwards and follow the style of `provision-aws` (`A1`–`A16`): each one is a
 real choice between realistic alternatives, not a restatement of the plan.
 
-## K1 — IaC strategy: BTP Terraform provider for the account plane, Kubernetes manifests for the workload plane
+## K1 — Pure Kubernetes manifests via the BTP Service Operator; no Terraform
 
-**Decision.** Service instances, service bindings, and anything that touches
-the subaccount are declared with the Terraform BTP provider. The Kyma
-namespace, resource quota, and the Kubernetes secrets that mirror the
-bindings are declared with the Kubernetes Terraform provider in the same
-root module. Workloads (`Deployment`, `APIRule`, `CronJob`) stay out of
-Terraform entirely — they ship as plain Kubernetes manifests under
-`deploy/btp/manifests/` and are applied by `kubectl` from CI.
+**Decision.** Service instances and bindings are declared as
+`services.cloud.sap.com/v1 ServiceInstance` and `ServiceBinding` custom
+resources, applied with `kubectl` against the Kyma cluster. The BTP Service
+Operator (`btp-manager`, present in `kyma-system` from the Kyma Environment
+provisioning) reconciles them against the subaccount's Service Manager and
+projects every binding's credentials into a `kubernetes.io/opaque` secret
+in the workload namespace. The Kyma namespace, labels, and resource quota
+are plain Kubernetes manifests in the same tree.
 
 **Alternatives considered.**
 
-1. **Everything in Kubernetes (BTP Service Operator).** The operator reconciles
-   `ServiceInstance` / `ServiceBinding` CRDs against the subaccount and
-   generates the secrets directly. Appealing because the whole stack would be
-   one `kubectl apply`.
-   - Rejected because the account plane is **shared across workloads** (API
-     and cron both consume the same XSUAA, the same buckets). Putting
-     service instances in a workload namespace makes the lifecycle of a
-     cluster-wide resource dependent on a namespace, and tearing down the
-     namespace loses the account state.
-2. **Everything in Terraform (Kubernetes provider owns Deployments too).**
-   Rejected for the opposite reason: Deployments change on every image build,
-   state churn would be enormous, and `kubectl rollout` ergonomics are what
-   CI already knows.
+1. **Terraform BTP provider + Kubernetes provider in one root module.** The
+   original K1 (revised here). Rejected after the Kyma cluster was found
+   to already run the BTP Service Operator — Terraform would duplicate
+   what the operator does natively, double the state surface (Terraform
+   state **and** cluster etcd), and add a second toolchain (`tofu`, `btp`
+   CLI) to the deploy path that the operator makes unnecessary. The AWS
+   tree uses Terraform because AWS has no in-cluster service broker; BTP
+   via Kyma does.
+2. **Terraform only for XSUAA, operator for everything else.** The XSUAA
+   `application` plan takes rich `parameters` (xs-security.json: scopes,
+   role templates, role collections). The operator's `ServiceInstance`
+   CR supports the same `parameters` field verbatim, so there is no
+   capability gap to work around. Rejected.
+3. **`btp` CLI scripts invoked from CI.** Imperative, non-idempotent,
+   state in whoever last ran the script. Rejected.
 
-The split keeps the slow-changing plane in state and the fast-changing plane
-out of it. The AWS deploy made the same split (`modules/service` carries task
-definitions, not container digests).
+Trade-off accepted: `kubectl apply` cannot represent dependencies the
+way Terraform's resource graph does. A `ServiceBinding` that references
+a `ServiceInstance` not yet reconciled will loop with `TransientError`
+until the instance is `Ready`. This is operator-native behaviour, not a
+bug, and `kubectl wait` covers it in CI.
+
+**Trade-off accepted (state).** Terraform state's audit trail (who
+changed what, when) moves to Kubernetes events + git history of the
+manifests. For a dev environment that is enough; a `staging`/`prod`
+change may revisit this.
 
 ## K2 — Scope limited to a single dev environment in `eu10`
 
-**Decision.** One root module, `environments/dev/`. No `staging/`,
-`production/`, or `workspaces`.
+**Decision.** One directory, `deploy/btp/dev/`. No overlays, no
+Kustomize bases shared with a yet-nonexistent staging. The subaccount
+is `I767568` (`95c7cf5e-21b8-42c7-8bde-7e7c97f53aba`), region `eu10`,
+Kyma cluster host `*.bfcc835.kyma.ondemand.com`.
 
-**Why not three environments like AWS?** The AWS tree pays for three because
-the service is live and the rehearsal environment must behave like
-production. This change is pre-cutover: nothing is live on BTP yet. Shipping
-dev-only now, and promoting to staging and production as separate changes
-later, keeps the number of simultaneously-moving pieces honest.
+Promotion to staging and production is a separate change. When it
+happens, this directory becomes `base/` and `dev`/`staging`/`prod` sit
+as overlays — but inventing that structure now, with no second
+environment to pressure-test it, is premature.
 
-**Workspace alternative rejected** for the same reason the AWS tree rejected
-it (**A6**): a workspace share one backend, which makes it possible to apply
-to the wrong environment while believing you are in dev. Separate root
-modules per environment is the convention here.
+## K3 — The Kyma cluster already exists; this change does not provision it
 
-## K3 — Terraform state lives in a Kyma-provisioned S3-compatible bucket, not in BTP's own storage
+**Decision.** The Kyma Environment is provisioned once per subaccount
+through the cockpit (Kyma Environment → Create). This repository treats
+the cluster as a prerequisite, documented in `deploy/btp/README.md`,
+not as a managed resource.
 
-**Decision.** Create one bucket in the Object Store service instance,
-dedicated to Terraform state, and point the Terraform S3 backend at it.
-Access via the binding's HMAC credentials.
-
-**Alternatives.**
-
-1. **Local state only.** Dev-scale, one operator, maybe fine. Rejected
-   because the baseline is meant to be reproducible by anyone with the
-   kubeconfig, and local state means losing the laptop loses the state.
-2. **BTP Credential Store or Document Store.** Not an object store with the
-   lock semantics Terraform needs. Rejected.
-3. **A pre-existing company S3 / Nexus / Artifactory.** Would couple this
-   repository to internal infrastructure we deliberately kept out of the
-   cloud-agnostic path (AGENTS.md: *"cloud-agnostic. No hardcoded bucket
-   URLs; configuration comes from the environment."*).
-
-The dedicated state bucket is created in `bootstrap/` with local state, same
-chicken-and-egg move as the AWS tree, and the main root module uses it from
-the first `init` onwards.
+**Why not automate cluster creation?** Provisioning Kyma is a
+45-minute, subaccount-wide, cockpit-level action that charges the
+subaccount's Kyma runtime entitlement. Automating it means owning the
+lifecycle of a thing the user and their colleagues share, and getting
+the teardown story wrong once is more expensive than the automation
+saves. Cockpit-first, manifests-second is the Kyma convention.
 
 ## K4 — Two Object Store instances, not one with two buckets
 
-**Decision.** Provision **two** Object Store service instances, each with
-its own binding and Kubernetes secret: one for the cron pipeline's results
-(`cron-results`) and one for the API's uploaded results (`api-results`).
-This matches the upstream `api/README.md` contract
-(`SCORECARD_RESULTS_BUCKET_URL` and `SCORECARD_CRON_RESULTS_BUCKET_URL`,
-different buckets by design).
+**Decision.** Two `ServiceInstance` resources of
+`objectstore / s3-standard`: one named `scorecard-cron-results`, one
+`scorecard-api-results`. Each has its own `ServiceBinding` and
+therefore its own set of S3 credentials.
 
-**Alternatives.**
+**Why two.** Upstream `api/README.md` splits them for IAM-boundary
+reasons: a compromised API pod must not be able to write into the cron
+pipeline's producer bucket. The service instance **is** the IAM
+boundary on BTP (one HMAC credential pair per binding), so two buckets
+= two instances. One instance with two bucket paths would share
+credentials and defeat the point.
 
-1. **One instance, two bucket paths.** The S3 driver in `gocloud.dev/blob`
-   supports path-based separation, but the service instance **is** the IAM
-   boundary on BTP — same instance means same credentials, which means a
-   compromised API pod could write into the cron pipeline's producer bucket
-   and silently corrupt a weekly scan. The upstream model separates the
-   two for exactly this reason.
-2. **Two bucket entitlements of plan `standard`.** Rejected on cost for a
-   dev environment; `s3-standard` with quota 2 is already in the dev
-   subaccount's entitlements.
+**Quota reality.** The subaccount entitlement is `s3-standard, 2`,
+which exactly matches the two instances this change creates. **This
+change exhausts the Object Store quota.** If a future change needs a
+third bucket (e.g. a dedicated state store, or a log archive), the
+entitlement must be raised first.
 
-A third bucket for Terraform state (K3) is a separate instance again, same
-reasoning. Total: three Object Store instances inside the dev subaccount's
-quota of 2 — **this is why the proposal flags Object Store quota 2 as the
-tightest constraint and K3 reuses the state bucket for both planes.**
+## K5 — XSUAA with two scopes
 
-**Correction (K4').** With quota 2, the two serving buckets exhaust the
-budget. The Terraform state bucket (K3) is therefore provisioned as a
-subdirectory inside one of the two instances — picking `api-results` for
-state because it is the smaller workload. If the entitlement is raised
-later, state moves to its own instance in a follow-up change.
+**Decision.** One `ServiceInstance` of `xsuaa / application`,
+parameters embedded as an `xs-security.json`-shaped block. Two scopes:
+`$XSAPPNAME.admin` (write access to POST uploads) and
+`$XSAPPNAME.read` (public GET). Two role templates. One role
+collection, `scorecard-infra-dev`, composing both roles — attached to
+users via IAS group mapping in a follow-up change.
 
-## K5 — XSUAA instance in `application` plan, two scopes
+**Alternative** (one scope, authenticated-equals-admin): rejected
+because the API's `GET /badge` and `GET /projects/*` paths are public
+and must stay reachable without a token. Two-scope split keeps the
+public read path public and the write path authenticated.
 
-**Decision.** One XSUAA service instance, plan `application`, with two
-scopes: `scorecard.admin` (write access to POST uploads) and `scorecard.read`
-(public GET). Role templates map each scope to a role; role collections
-compose them for humans. CI service accounts use the `client_credentials`
-grant with `scorecard.admin`.
+**Alternative** (OAuth client in Credential Store instead of XSUAA):
+rejected because APIRule's `jwt` handler expects XSUAA-shaped tokens
+with `scope` claims; Credential Store issues different token shapes
+and would need a token-exchange hop.
 
-**Alternative** (one scope, authenticated-equals-admin): rejected because
-the API's public GET endpoint has no auth today and must stay reachable
-without a token. See the upstream `api/README.md` on the `/badge` and
-`GET /projects/*` paths. The two-scope split keeps the public read path
-public and the write path authenticated, same as the AWS deployment plans
-to.
+## K6 — Service bindings surface as Kubernetes secrets in the workload namespace
 
-## K6 — Service bindings surface as Kubernetes secrets inside the workload namespace
+**Decision.** Every `ServiceBinding` sets
+`secretName: <instance>-binding` and lands in the workload namespace
+`scorecard-infra-dev`. The follow-up change `deploy-kyma-api` consumes
+these secret names via `envFrom.secretRef` in the API Deployment.
 
-**Decision.** For every service instance (XSUAA, both Object Stores, IAS,
-Credential Store), the Terraform root creates a `btp_subaccount_service_binding`
-and projects it as a `kubernetes_secret` into the Kyma workload namespace.
-The follow-up change (`deploy-kyma-api`) consumes those secret names via
-`envFrom` in its Deployment.
+The operator writes the full binding's credentials JSON **and**
+flattens each top-level key into its own secret entry (e.g. `clientid`,
+`clientsecret`, `url` for XSUAA; `bucket`, `access_key_id`,
+`secret_access_key`, `uri` for Object Store). Both forms are
+available; `envFrom` consumes the flattened keys as env vars.
 
-**Alternative** (binding → `btp_subaccount_service_credentials` → environment
-variables straight into the Deployment): rejected because the Deployment
-belongs to a different change and must not reach back into the baseline's
-state. Secrets are a Kubernetes-native handoff and survive the Deployment
-being recreated.
+**Rotation.** The binding, not the secret, is the source of truth.
+Rotating credentials is
+`kubectl delete servicebinding <name> && kubectl apply -f …` on the
+manifest; the secret is recreated from the new binding.
 
-**Secret rotation.** The binding, not the secret, is the source of truth.
-Rotating credentials is `tofu taint && tofu apply` on the binding resource;
-the secret follows. The Kubernetes secret has `ignore_changes = [data]`
-left out on purpose: Terraform **should** overwrite a drifted secret.
+## K7 — Namespace carries labels and a ResourceQuota; no NetworkPolicy yet
 
-## K7 — Namespace resources: quota yes, network policy later
+**Decision.** `scorecard-infra-dev` namespace with labels
+`app.kubernetes.io/part-of=scorecard-infra`, `environment=dev`, and
+`istio-injection=enabled` (opts the namespace into Kyma's Istio mesh).
+A `ResourceQuota` sized for the API + a handful of cron pods.
 
-**Decision.** The namespace carries a `ResourceQuota` sized for the dev
-workloads (small). It does **not** carry `NetworkPolicy` yet; Kyma's
-default Istio sidecar is doing the ingress gating, and adding a
-`NetworkPolicy` without a matching policy for egress to the Object Store
-S3 endpoint would break the API on first request.
+No `NetworkPolicy` here. The egress surface — S3 endpoints, IAS token
+endpoint, GitHub — is only knowable once the first workload is in. The
+`deploy-kyma-api` change is where the policy lands, together with the
+Deployment that defines what it allows.
 
-Network policy is deferred to `deploy-kyma-api`, which is the first change
-that knows the egress surface (S3 endpoint, IAS token endpoint, GitHub).
+## K8 — Alert Notification and Cloud Logging bind at the baseline; consumers subscribe later
 
-## K8 — Alert Notification and Cloud Logging bind at the baseline, consumers subscribe later
+**Decision.** Both services (`alert-notification / free`,
+`cloud-logging / dev`) are provisioned and bound here. The Kubernetes
+secrets exist, consumers do not. `deploy-kyma-api` and
+`deploy-kyma-cron` wire pod logs to the Cloud Logging endpoint and
+emit events into Alert Notification using those secrets.
 
-**Decision.** The Alert Notification (`free` plan) and Cloud Logging (`dev`
-plan) instances are created here and bound; the Kubernetes secrets exist
-and are empty of consumers. `deploy-kyma-api` and `deploy-kyma-cron` will
-wire pod logging to Cloud Logging and emit events into Alert Notification.
+Alert Notification and Cloud Logging are shared across workloads, so
+the baseline owns them. Creating them lazily inside each workload
+change would race if two workload changes land close together.
 
-Rationale: both services have quota 1 and are shared across workloads, so
-the account plane owns them. Creating them lazily inside each workload
-change would race if the two changes land close together.
+## K9 — Credential Store removed from the baseline (was: provisioned but unbound)
 
-## K9 — The `btp` provider's auth is a short-lived user token, not a long-lived credential
+**Decision.** The `credstore / proxy` instance is **not** part of the
+baseline. It was attempted and removed.
 
-**Decision.** The Terraform BTP provider authenticates with the operator's
-own `btp login` session (environment variables sourced from
-`btp get subaccount-env`). No service user is created for Terraform.
+**Why it could not be provisioned.** The `proxy` plan is a *consumer
+proxy* onto a shared, already-existing Credential Store instance — it
+takes a mandatory "service origin" (the GUID of the original instance)
+and has no credential store of its own. The dev subaccount is entitled
+to `credstore / proxy` only; no `free`/`standard` plan is entitled to
+act as the origin the proxy would consume. A standalone `proxy`
+instance therefore fails with `Mandatory parameters for service origin
+are not specified`.
 
-**Why not a technical user?** Dev-only, one operator, and SAP's technical
-user plans for BTP cost an entitlement and a role assignment we have not
-budgeted. When this change promotes to staging, a technical user becomes
-appropriate and gets its own decision record.
+**Consequence.** If a later change needs a secret store for things
+XSUAA cannot hold (Fastly purge token, GitHub App key for cron), it
+raises the Credential Store entitlement to a non-proxy plan and
+reintroduces the instance with its own decision record. Until then,
+the baseline carries no Credential Store.
+
+**This supersedes the original K9** ("provisioned but unbound"), which
+assumed `proxy` was a standalone plan.
 
 ## K10 — No OpenSpec `specs/` delta
 
 **Decision.** This change introduces infrastructure, not a product
-capability. No new or changed capability belongs in `openspec/specs/`. The
-closest existing capability — `aws-serving` — stays unchanged; a future
-`btp-serving` capability will be born when a Deployment actually serves
-traffic from BTP (that is `deploy-kyma-api`, not this change).
-
-Same precedent as `rename-api-binary` (**R5**).
+capability. Same precedent as `rename-api-binary` (**R5**). A future
+`btp-serving` capability spec is born in `deploy-kyma-api`, which is
+the first change that actually serves traffic from BTP.
 
 ## Open questions (resolve during tasks or in follow-ups)
 
-- **Which Kyma plane logs land where?** Decision deferred to
-  `deploy-kyma-api` (**K8** covers the service plumbing; the choice of
-  which log streams to subscribe is a workload concern).
-- **Is a BTP Destination needed for anything in this baseline?** Current
-  answer: no (public GitHub, no on-prem). The entitlement is retained in
-  case `deploy-kyma-cron` needs it for a GHE webhook later.
-- **Credential Store `proxy` plan — do we actually need it in dev?**
-  Entitlement is there; this change provisions the instance but does not
-  bind it to anything. If `deploy-kyma-api` ends up using it for the Fastly
-  purge token (currently in AWS Secrets Manager), the binding lands there.
-  If not, this instance should be removed in a cleanup change.
+- **IAS trust configuration beyond provisioning.** The
+  `identity / application` instance is created, but mapping an IAS
+  group to the `scorecard-infra-dev` role collection is a cockpit
+  action the operator CR does not express. Documented in
+  `deploy/btp/README.md`; the actual mapping is a `deploy-kyma-api`
+  concern (the first change that cares who logs in).
+- **Alert Notification subscriptions.** The service exposes an API;
+  the pattern (which events to subscribe to, which actions to fire)
+  is a workload concern, deferred to `deploy-kyma-cron`.
+- **Should the manifests be plain YAML or Kustomized?** Current
+  choice: plain YAML in `deploy/btp/dev/`. When the second environment
+  lands, Kustomize overlays are the obvious refactor.
