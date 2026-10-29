@@ -1,0 +1,90 @@
+# Scorecard results API — Deployment. See design.md KA1–KA4, KA8.
+#
+# Image pinned to an immutable sha-<commit> tag (KA1): a redeploy is
+# reproducible, and an unrelated merge republishing :main cannot change
+# what runs here. Bump by editing the tag and re-applying.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scorecard-api
+  namespace: scorecard-infra-dev
+  labels:
+    app.kubernetes.io/name: scorecard-api
+    app.kubernetes.io/part-of: scorecard-infra
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scorecard-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: scorecard-api
+        app.kubernetes.io/part-of: scorecard-infra
+    spec:
+      containers:
+        - name: scorecard-api
+          image: ghcr.io/clafter/scorecard-api:sha-92d24d8bc9c683e0d8b8b35fd3350104420f11b2
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # --- api-results bucket: parts from the binding secret ---
+            - name: BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: scorecard-api-results-binding
+                  key: bucket
+            - name: BUCKET_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: scorecard-api-results-binding
+                  key: region
+            # --- cron-results bucket: parts from its binding secret ---
+            - name: CRON_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: scorecard-cron-results-binding
+                  key: bucket
+            - name: CRON_BUCKET_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: scorecard-cron-results-binding
+                  key: region
+            # --- composed bucket URLs (KA2): env-var reference expansion ---
+            - name: SCORECARD_RESULTS_BUCKET_URL
+              value: "s3://$(BUCKET)?region=$(BUCKET_REGION)&awssdk=v2"
+            - name: SCORECARD_CRON_RESULTS_BUCKET_URL
+              value: "s3://$(CRON_BUCKET)?region=$(CRON_BUCKET_REGION)&awssdk=v2"
+            # --- AWS credentials for the S3-backed Object Store (KA3, KA4) ---
+            # Dev: api-results credentials. KA4 flags that production needs
+            # per-bucket credentials; the cron fallback read may 403 here.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: scorecard-api-results-binding
+                  key: access_key_id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: scorecard-api-results-binding
+                  key: secret_access_key
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20

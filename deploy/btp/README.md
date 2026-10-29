@@ -147,7 +147,75 @@ Two of the originally-planned instances are intentionally absent:
 
 ## Follow-up work
 
-- `deploy-kyma-api` — Deployment, APIRule, NetworkPolicy, logging
-  consumer, IAS trust mapping.
+- `deploy-kyma-api` — **shipped.** Deployment, Service, APIRule,
+  NetworkPolicy for the results API. See "The API workload" below.
 - `deploy-kyma-cron` — scorecard-cron pipeline CronJobs, Alert
   Notification subscribers.
+- IAS browser-login path — separate change (OIDC trust + tenant
+  choice).
+
+## The API workload (deploy-kyma-api)
+
+On top of the baseline, `deploy/btp/dev/` carries the results API:
+
+| File | What |
+|---|---|
+| `api-deployment.yaml` | `scorecard-api` Deployment, one replica, image pinned to an immutable `sha-<commit>` tag. |
+| `api-service.yaml` | ClusterIP Service on `:8080`. |
+| `api-apirule.yaml` | APIRule (`gateway.kyma-project.io/v2`): GET public (`noAuth`), POST gated by XSUAA JWT. |
+| `api-networkpolicy.yaml` | Ingress from the mesh only; egress to DNS, istio-system, and 443. |
+
+### How the bucket URL is composed
+
+The API wants one `s3://…` URL per bucket; the Object Store binding
+secret exposes the parts separately (`bucket`, `region`,
+`access_key_id`, `secret_access_key`). The Deployment maps the parts to
+intermediate env vars and assembles the URL with Kubernetes env-var
+reference expansion:
+
+```yaml
+- name: BUCKET            # from secret key `bucket`
+- name: BUCKET_REGION     # from secret key `region`
+- name: SCORECARD_RESULTS_BUCKET_URL
+  value: "s3://$(BUCKET)?region=$(BUCKET_REGION)&awssdk=v2"
+```
+
+The BTP Object Store is backed by real AWS S3 in `eu-central-1`;
+credentials resolve through the AWS SDK v2 default chain from
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, both mapped from the same
+binding secret.
+
+### Where the APIRule issuer / jwksUri come from
+
+The `jwt` access strategy's `issuer` and `jwksUri` are the XSUAA
+tenant's values, read once from the `xsuaa-binding` secret:
+
+- `issuer`  = secret key `url`
+  (`https://<subdomain>.authentication.<region>.hana.ondemand.com`)
+- `jwksUri` = that URL + `/token_keys`
+
+An APIRule field cannot reference a secret, so these are inlined in
+`api-apirule.yaml`. A tenant change is a documented manifest edit.
+
+### Reaching the API
+
+```sh
+# Public read (no token):
+curl https://scorecard-api.bfcc835.kyma.ondemand.com/
+
+# Upload (requires an XSUAA client_credentials token):
+TOKEN=$(curl -s -u "$CLIENTID:$CLIENTSECRET" \
+  "https://<subdomain>.authentication.eu10.hana.ondemand.com/oauth/token?grant_type=client_credentials" \
+  | jq -r .access_token)
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  https://scorecard-api.bfcc835.kyma.ondemand.com/projects/github.com/OWNER/REPO ...
+```
+
+`$CLIENTID` / `$CLIENTSECRET` come from the `xsuaa-binding` secret
+(keys `clientid`, `clientsecret`).
+
+### Bumping the image
+
+Edit the `sha-<commit>` tag in `api-deployment.yaml` to a newer
+`publish-images` output and `kubectl apply -k deploy/btp/dev/`. The tag
+is immutable per publish, so a redeploy is reproducible.

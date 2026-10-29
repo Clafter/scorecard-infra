@@ -1,0 +1,51 @@
+# Scorecard results API — NetworkPolicy. See design.md KA7.
+#
+# The egress surface the baseline deferred (K7), now known: DNS, plus
+# HTTPS to the S3 Object Store, the XSUAA token endpoint, and Cloud
+# Logging ingestion — all public HTTPS (443). Ingress only from the
+# Istio mesh. A tighter per-CIDR egress list is a production concern.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: scorecard-api
+  namespace: scorecard-infra-dev
+  labels:
+    app.kubernetes.io/name: scorecard-api
+    app.kubernetes.io/part-of: scorecard-infra
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: scorecard-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Traffic enters only through the Istio ingress gateway.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # DNS resolution.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Istio control plane (istiod): CA/CSR signing (15012) and xDS. The
+    # sidecar cannot bootstrap without this, so the whole istio-system
+    # namespace is allowed for mesh traffic. Omitting it deadlocks the
+    # pod in Init (istio-proxy startup probe never passes).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+    # HTTPS to S3 (eu-central-1), XSUAA, Cloud Logging — all public 443.
+    - ports:
+        - protocol: TCP
+          port: 443
