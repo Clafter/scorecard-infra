@@ -17,14 +17,17 @@ including what could not come across and where to trace it.
 Read it before working in this tree. Two rules apply here and nowhere else in
 the repository:
 
-- **Keep the tree equivalent to what `ossf/scorecard` builds** until the
-  production cutover to AWS completes. That equivalence is the cutover's
-  acceptance test *and* its rollback path, so refactors, restructuring into this
-  repository's `internal/` + `cmd/` layout, and cleanups are deferred by design —
-  not overlooked.
+- **BTP is the deployment target.** The production cutover goes to SAP BTP
+  (Kyma), not AWS. Engine changes needed to run the pipeline on BTP — notably
+  a native message-queue driver for SAP Event Mesh — are **in scope**, not
+  deferred. A temporary cross-cloud dependency (an AWS SQS queue the Kyma
+  workloads reach) is accepted for the dev evaluation until the Event Mesh
+  driver lands; it is a known interim, tracked in `deploy-kyma-cron`, not the
+  end state.
 - **`cron/internal/format` serializes a data model that lives upstream**, so a
   schema edit here without the corresponding engine change breaks the published
-  contract silently (`schema_gen_test.go` is what catches it).
+  contract silently (`schema_gen_test.go` is what catches it). This holds
+  regardless of the deployment target.
 
 ## Pipeline components
 
