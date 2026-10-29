@@ -28,12 +28,12 @@ ARG GIT_VERSION
 ARG GIT_HASH
 # The build context is the repository root, because go.mod lives there. The
 # API's own Makefile is one level down and its recipes are relative to it.
-RUN CGO_ENABLED=0 make -C api scorecard-webapp GIT_VERSION="$GIT_VERSION" GIT_HASH="$GIT_HASH"
+RUN CGO_ENABLED=0 make -C api scorecard-api GIT_VERSION="$GIT_VERSION" GIT_HASH="$GIT_HASH"
 
 # Multi-Stage production build
 FROM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 as deploy
 # Retrieve the binary from the previous stage
-COPY --from=builder /opt/app-root/src/api/scorecard-webapp /usr/local/bin/scorecard-webapp
+COPY --from=builder /opt/app-root/src/api/scorecard-api /usr/local/bin/scorecard-api
 
 # Set the binary as the entrypoint of the container
 #
@@ -45,5 +45,5 @@ COPY --from=builder /opt/app-root/src/api/scorecard-webapp /usr/local/bin/scorec
 # rather than by changing the spec -- `schemes: [https]` is what the published
 # document advertises and what generated clients default to, and both are
 # correct.
-ENTRYPOINT scorecard-webapp --scheme=http --host="0.0.0.0" --port=8080
+ENTRYPOINT scorecard-api --scheme=http --host="0.0.0.0" --port=8080
 EXPOSE 8080
