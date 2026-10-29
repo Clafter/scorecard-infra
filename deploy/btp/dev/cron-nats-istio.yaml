@@ -1,0 +1,45 @@
+# Istio mTLS carve-out for the in-cluster NATS broker.
+#
+# NATS speaks first on connect (the server sends an INFO frame before the
+# client sends anything). Istio's STRICT mTLS (the cluster-wide default
+# PeerAuthentication in istio-system) expects the client to open the TLS
+# handshake, so a mesh client dialing NATS deadlocks and times out
+# (observed: worker -> nats 4222 i/o timeout). This is a known
+# NATS + Istio interaction.
+#
+# Fix, minimal (golden rule 2): take NATS's port out of the mTLS path.
+#   1. PeerAuthentication PERMISSIVE on the NATS workload, port 4222 —
+#      NATS accepts plaintext from mesh clients.
+#   2. DestinationRule DISABLE for clients dialing the NATS service —
+#      their sidecars send plaintext instead of initiating mTLS.
+# Scope is limited to the NATS service only; everything else in the
+# namespace keeps STRICT mTLS.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: scorecard-nats-permissive
+  namespace: scorecard-infra-dev
+  labels:
+    app.kubernetes.io/part-of: scorecard-infra
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scorecard-nats
+  mtls:
+    mode: STRICT
+  portLevelMtls:
+    "4222":
+      mode: PERMISSIVE
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: scorecard-nats-disable-mtls
+  namespace: scorecard-infra-dev
+  labels:
+    app.kubernetes.io/part-of: scorecard-infra
+spec:
+  host: scorecard-nats.scorecard-infra-dev.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: DISABLE

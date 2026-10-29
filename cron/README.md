@@ -28,6 +28,16 @@ the repository:
   schema edit here without the corresponding engine change breaks the published
   contract silently (`schema_gen_test.go` is what catches it). This holds
   regardless of the deployment target.
+- **The controller writes a run's `.shard_metadata` marker BEFORE it
+  publishes any scan request** (`internal/controller/main.go`). Upstream
+  publishes first and writes the marker after, relying on the queue to
+  redeliver a request the worker nacks while the marker is still missing.
+  The BTP queue is in-cluster NATS via the gocloud `natspubsub` driver,
+  which is at-most-once — a nack is a no-op and the request is lost — so the
+  ordering is reversed to make the marker always present on receipt. The
+  SQS/GCP result is identical (marker present before the worker acts either
+  way); this is a deliberate, scoped divergence from upstream ordering,
+  tracked in `openspec/changes/controller-metadata-before-publish`.
 
 ## Pipeline components
 

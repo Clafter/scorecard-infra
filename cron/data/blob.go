@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"time"
 
 	"gocloud.dev/blob"
@@ -42,44 +41,24 @@ var (
 	errParseBlobName = errors.New("error parsing input blob name")
 )
 
-// openBucket opens a blob bucket from a URL, with one addition over
-// blob.OpenBucket: an optional `prefix` query parameter. When present, the
-// returned bucket is wrapped so every key is transparently namespaced under
-// that prefix (blob.PrefixedBucket), and the `prefix` parameter is stripped
-// before the URL reaches the driver.
+// openBucket opens a blob bucket from a URL. gocloud.dev/blob v0.46+ reads
+// the optional `prefix` (and `key`) query parameter natively in
+// OpenBucket/applyPrefixParam and wraps the bucket with PrefixedBucket, so
+// a URL like s3://bucket?prefix=role/ namespaces every key under role/
+// with no extra code here. This indirection exists only to keep one open
+// path for the package; the prefixing is the driver framework's, not ours.
 //
-// This lets several logical buckets share one physical bucket under distinct
-// prefixes -- needed on SAP BTP, where Object Store gives one hard-scoped
-// credential per bucket and a single-credential pod must address all of the
-// pipeline's buckets through one instance (see deploy-kyma-cron KC7). A URL
-// without `prefix` behaves exactly as blob.OpenBucket did, so the SQS/GCP
-// deployments are unaffected.
+// The prefix layout lets several logical buckets share one physical bucket
+// under distinct prefixes -- needed on SAP BTP, where Object Store gives
+// one hard-scoped credential per bucket and a single-credential pod must
+// address all of the pipeline's buckets through one instance (see
+// deploy-kyma-cron KC7).
 func openBucket(ctx context.Context, bucketURL string) (*blob.Bucket, error) {
-	parsed, err := url.Parse(bucketURL)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing bucket URL: %w", err)
-	}
-
-	q := parsed.Query()
-	prefix := q.Get("prefix")
-	if prefix == "" {
-		// No prefix: open the URL as-is, unchanged behaviour.
-		bucket, err := blob.OpenBucket(ctx, bucketURL)
-		if err != nil {
-			return nil, fmt.Errorf("error from blob.OpenBucket: %w", err)
-		}
-		return bucket, nil
-	}
-
-	// Strip `prefix` so the driver sees only parameters it understands.
-	q.Del("prefix")
-	parsed.RawQuery = q.Encode()
-
-	bucket, err := blob.OpenBucket(ctx, parsed.String())
+	bucket, err := blob.OpenBucket(ctx, bucketURL)
 	if err != nil {
 		return nil, fmt.Errorf("error from blob.OpenBucket: %w", err)
 	}
-	return blob.PrefixedBucket(bucket, prefix), nil
+	return bucket, nil
 }
 
 func blobKeysPrefix(ctx context.Context, bucket *blob.Bucket, filePrefix string) ([]string, error) {
