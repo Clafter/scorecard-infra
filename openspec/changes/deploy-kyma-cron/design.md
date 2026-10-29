@@ -185,14 +185,100 @@ All four questions that gated this change are now decided:
 - **(KC3) Analytics:** ✅ Dropped for dev; no BigQuery, no replacement
   sink in this change.
 
-## Remaining verify-at-apply items
+## Verified at build time (2026-10-29)
 
-- **SQS provisioning:** a dev AWS SQS queue and the AWS credentials the
-  Kyma workloads use to reach it (whose AWS account, which IAM policy).
-- **Worker token-auth:** confirm the cron worker accepts a bare
-  `github.token` secret without the GitHub App keys (`app_id`,
-  `installation_id`, `app_key`), and tolerates absent GitLab/Fastly
-  secrets for GitHub-only runs.
+- **Worker token-auth:** ✅ Scorecard reads `GITHUB_AUTH_TOKEN` /
+  `GITHUB_TOKEN` / `GH_TOKEN` (scorecard v5.6.0
+  `roundtripper/tokens/accessor.go`); the GitHub App keys are optional.
+  The personal-token path works without an App. GitLab/Fastly secrets
+  are optional for GitHub-only runs.
+- **Queue:** NATS in-cluster, driver added in `add-nats-pubsub-driver`.
+  No AWS SQS (superseded — golden rule 1).
 - **Bucket name templating:** the generated `hcp-<uuid>` names come from
-  the binding secret (KC5); finalise ConfigMap templating when writing
-  the manifests.
+  the binding secrets; `apply-cron.sh` fills the ConfigMap template at
+  apply time (KC5).
+
+## KC7 — Bucket allocation under a 2-instance quota with hard credential isolation (RESOLVED via option A)
+
+**Resolution (user decision, golden rule 4 → option A).** Instead of a
+third Object Store entitlement, a minimal engine change
+(`cron-bucket-prefix`) teaches `cron/data` to honour a `?prefix=` query
+parameter on bucket URLs. Every logical bucket role then lives in the
+**one** `cron-results` instance under a distinct key prefix, written by
+its single hard-scoped keypair. No collisions, no AWS, no new
+entitlement — golden rules 1+2+3 all satisfied. Deployed and verified
+live 2026-10-29 (all five bucket URLs in the ConfigMap carry their
+prefix; the worker reaches the one bucket with one credential pair).
+
+The analysis below is kept for the record.
+
+### Original analysis (why it was a stop)
+
+**Context.** The cron pipeline uses five logical buckets: `result-data`,
+`raw-result-data`, `input`, `cii-data`, `api-results`. The subaccount has
+two Object Store instances (`scorecard-cron-results`,
+`scorecard-api-results`); quota is exhausted (baseline K4).
+
+**Empirically established** (in-cluster cross-bucket write tests,
+2026-10-29):
+
+- Each binding's S3 credentials are **hard-scoped to their own bucket**.
+  The cron keypair gets `AccessDenied` on the api bucket and vice versa.
+  Both keys are the same AWS account (`AKIAWMIH…`) but carry
+  bucket-specific IAM policies.
+- A pod has exactly one AWS credential pair; `s3blob` has no per-URL
+  profile/credential parameter (verified in the driver source). One pod
+  writes exactly one of the two buckets.
+
+**The conflict.** The worker process writes three bucket roles:
+
+- `api-results` (keys `<repo>/results.json`) — the bucket the live API
+  reads. **Critical path.** Lives in the api-results instance.
+- `result-data` (keys `<timestamp>/.shard_metadata`, …) — cron instance.
+- `raw-result-data` — the **same** keys as `result-data`
+  (`GetBlobFilename`, verified), so it collides with `result-data` in one
+  bucket and needs a physically separate bucket.
+
+Three write targets (two colliding) across a hard 2-bucket credential
+boundary one pod cannot straddle. Not resolvable without (a) a feature
+loss/code change or (b) a third Object Store entitlement.
+
+**Why this is a golden-rule-4 stop.** Rule 2 (no feature loss, no
+overcomplication) and rule 3 (no new entitlement unless strictly
+necessary) point in opposite directions, and the choice is not derivable
+from the rules:
+
+- **Option B — one more Object Store instance (breaks rule 3, honours
+  rule 2).** `raw-result-data` gets its own bucket. Clean, every feature
+  intact. One entitlement ask to Sebastian. *Even so, the worker still
+  writes two isolated buckets (cron-internal + api-results) with one
+  keypair* — so a third bucket alone does not close it; see below.
+- **Option A — code change to the worker/config (breaks rule 2).** Make
+  the worker write all results through a single bucket+keypair (e.g.
+  route api-results through the cron instance, drop the separate raw
+  export). Loses the API-fallback separation the two-bucket design
+  (baseline K4) exists for, or drops raw. A code change in the imported
+  tree.
+- **The deeper fact:** the pipeline assumes it can address several
+  independently-credentialed buckets from one process. BTP Object Store
+  gives one credential per bucket, hard-scoped. Making the two models
+  meet needs *either* a credential layout where the worker's buckets
+  share one keypair (a single multi-bucket instance — not how BTP
+  s3-standard works), *or* a worker that uses per-bucket credentials
+  (code change), *or* splitting the worker's writes across pods (code
+  change).
+
+**Recommendation to the user.** The minimal, feature-complete path that
+respects rule 1 (all BTP) is a **single Object Store instance holding all
+cron+api results under distinct key prefixes, consumed by one keypair** —
+which is *fewer* instances, not more, and needs a small change to how the
+pipeline derives bucket URLs (one bucket, prefix per role). That trades a
+touch of rule-2 "no code" for satisfying rules 1+3 and the credential
+reality. Alternatively, accept one entitlement bump (rule 3) to give each
+colliding bucket its own instance **and** a worker credential design that
+fits.
+
+**Status: STOPPED for a decision (golden rule 4).** Everything up to the
+bucket-credential wiring is built (NATS, RBAC, controller, worker,
+config template). The worker's multi-bucket credential model is the one
+thing that cannot be chosen from the rules alone.

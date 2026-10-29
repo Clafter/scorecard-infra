@@ -1,0 +1,102 @@
+# Scorecard batch pipeline — worker (consumer). See deploy-kyma-cron.
+#
+# Consumes scan requests from the in-cluster NATS queue, scans each
+# repository, writes results to the buckets in the mounted config.
+# Adapted from cron/k8s/worker.yaml (the AWS version):
+#   - replicas 14 -> 1 (dev, fits the baseline ResourceQuota alongside the
+#     API and NATS pods; golden rule 2)
+#   - EKS Pod Identity + custom node pools dropped (Kyma has neither here)
+#   - queue is nats:// in-cluster, not SQS
+#   - GitHub auth is a personal token (GITHUB_AUTH_TOKEN), not a GitHub App
+#     (KC2). GitLab/Fastly secrets dropped: the dev evaluation scans the
+#     GitHub corpus only, and Scorecard treats those as optional (golden
+#     rule 2 — minimal without losing the GitHub-scan feature).
+#   - S3 credentials from the cron-results binding secret.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scorecard-batch-worker
+  namespace: scorecard-infra-dev
+  labels:
+    app.kubernetes.io/name: scorecard-batch-worker
+    app.kubernetes.io/part-of: scorecard-infra
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scorecard-batch-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: scorecard-batch-worker
+        app.kubernetes.io/part-of: scorecard-infra
+    spec:
+      serviceAccountName: scorecard-batch-worker
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: ghcr.io/clafter/scorecard-batch-worker:main
+          args: ["--ignoreRuntimeErrors=true", "--config=/etc/scorecard/config.yaml"]
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 300m
+              memory: 1Gi
+            limits:
+              # The upstream worker sets no CPU limit on purpose (throttling
+              # a scan makes it slow, not safe). The baseline ResourceQuota
+              # requires a limits.cpu, so set a generous one that does not
+              # bind in practice (golden rule 2: honour the quota minimally).
+              cpu: "1"
+              memory: 2Gi
+          env:
+            # In-cluster NATS queue (add-nats-pubsub-driver).
+            - name: NATS_SERVER_URL
+              value: "nats://scorecard-nats.scorecard-infra-dev.svc.cluster.local:4222"
+            - name: SCORECARD_REQUEST_SUBSCRIPTION_URL
+              value: "nats://scorecard-batch"
+            # Personal GitHub token (KC2). Scorecard reads GITHUB_AUTH_TOKEN;
+            # with it set, the GitHub App path (GITHUB_APP_*) is not needed.
+            - name: GITHUB_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github
+                  key: token
+            # S3 credentials for the cron-results bucket (and the api-results
+            # bucket the config's raw/api URLs point at — see KC7 for the
+            # single-credential-set caveat, acceptable for dev).
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: scorecard-cron-results-binding
+                  key: access_key_id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: scorecard-cron-results-binding
+                  key: secret_access_key
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/scorecard
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config-volume
+          configMap:
+            name: scorecard-config
+        - name: tmp
+          emptyDir: {}
+  strategy:
+    type: "RollingUpdate"
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1

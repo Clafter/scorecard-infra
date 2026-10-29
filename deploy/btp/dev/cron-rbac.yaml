@@ -1,0 +1,49 @@
+# Scorecard batch pipeline — RBAC. See deploy-kyma-cron KC4.
+#
+# One ServiceAccount per workload (good hygiene, and the controller's SA
+# needs rollout-restart rights on the worker Deployment). No EKS Pod
+# Identity annotations — on Kyma, cloud access comes from the Object
+# Store binding secrets, not an attached IAM role.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: scorecard-batch-controller
+  namespace: scorecard-infra-dev
+  labels:
+    app.kubernetes.io/part-of: scorecard-infra
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: scorecard-batch-worker
+  namespace: scorecard-infra-dev
+  labels:
+    app.kubernetes.io/part-of: scorecard-infra
+---
+# The controller's second container runs `kubectl rollout restart` on the
+# worker Deployment after publishing a new shard, so its SA needs get+patch
+# on that one Deployment.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: scorecard-batch-controller
+  namespace: scorecard-infra-dev
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["scorecard-batch-worker"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: scorecard-batch-controller
+  namespace: scorecard-infra-dev
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: scorecard-batch-controller
+subjects:
+  - kind: ServiceAccount
+    name: scorecard-batch-controller
+    namespace: scorecard-infra-dev
