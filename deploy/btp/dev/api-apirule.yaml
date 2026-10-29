@@ -1,0 +1,38 @@
+# Scorecard results API — APIRule. See design.md KA5, KA6.
+#
+# Method-split access: every GET is public (noAuth), POST requires a
+# valid XSUAA JWT (jwt). Rules are ordered; the GET rule is matched for
+# read traffic, the POST rule gates uploads.
+#
+# issuer / jwksUri are the XSUAA tenant values from the xsuaa-binding
+# secret (keys `url` + `/token_keys`). An APIRule field cannot reference
+# a secret, so they are inlined here; a tenant change is a documented
+# edit (see deploy/btp/README.md).
+apiVersion: gateway.kyma-project.io/v2
+kind: APIRule
+metadata:
+  name: scorecard-api
+  namespace: scorecard-infra-dev
+  labels:
+    app.kubernetes.io/name: scorecard-api
+    app.kubernetes.io/part-of: scorecard-infra
+spec:
+  hosts:
+    - scorecard-api.bfcc835.kyma.ondemand.com
+  gateway: kyma-system/kyma-gateway
+  service:
+    name: scorecard-api
+    namespace: scorecard-infra-dev
+    port: 8080
+  rules:
+    # Public read — no token required.
+    - path: /*
+      methods: ["GET"]
+      noAuth: true
+    # Authenticated write — XSUAA JWT required.
+    - path: /*
+      methods: ["POST"]
+      jwt:
+        authentications:
+          - issuer: https://i767568-e7443kwa.authentication.eu10.hana.ondemand.com
+            jwksUri: https://i767568-e7443kwa.authentication.eu10.hana.ondemand.com/token_keys

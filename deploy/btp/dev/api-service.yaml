@@ -1,0 +1,17 @@
+# Scorecard results API — Service. ClusterIP; the APIRule fronts it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: scorecard-api
+  namespace: scorecard-infra-dev
+  labels:
+    app.kubernetes.io/name: scorecard-api
+    app.kubernetes.io/part-of: scorecard-infra
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: scorecard-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

@@ -1,19 +1,31 @@
-# Kustomization for the scorecard-infra dev baseline on BTP/Kyma.
+# Kustomization for the scorecard-infra dev deployment on BTP/Kyma.
 #
 # Apply with: kubectl apply -k deploy/btp/dev/
 #
-# Resource order below is informational; the BTP Service Operator
-# reconciles instances and bindings asynchronously, so bindings will
-# wait (TransientError) until their instances reach Ready=True.
+# Baseline resources (namespace, service instances, bindings) are
+# reconciled by the BTP Service Operator asynchronously; workload
+# resources (the API) consume the bindings' secrets. Order below is
+# informational — Kubernetes and the operator handle eventual
+# consistency.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
+  # Baseline (deploy-kyma-baseline)
   - namespace.yaml
   - services.yaml
   - bindings.yaml
+  # API workload (deploy-kyma-api)
+  - api-deployment.yaml
+  - api-service.yaml
+  - api-apirule.yaml
+  - api-networkpolicy.yaml
 
-commonLabels:
-  app.kubernetes.io/part-of: scorecard-infra
-  app.kubernetes.io/managed-by: kustomize
-  environment: dev
+# labels (not commonLabels): includeSelectors:false keeps these out of
+# Deployment/Service selectors, which are immutable once set.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: scorecard-infra
+      app.kubernetes.io/managed-by: kustomize
+      environment: dev
+    includeSelectors: false
