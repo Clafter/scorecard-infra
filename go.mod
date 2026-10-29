@@ -23,6 +23,7 @@ require (
 	go.opencensus.io v0.24.0
 	go.yaml.in/yaml/v2 v2.4.4
 	gocloud.dev v0.46.0
+	gocloud.dev/pubsub/natspubsub v0.46.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/time v0.16.0
 	google.golang.org/protobuf v1.36.12
@@ -58,6 +59,9 @@ require (
 	github.com/icholy/digest v1.2.0 // indirect
 	github.com/moby/moby/api v1.55.0 // indirect
 	github.com/moby/moby/client v0.5.1 // indirect
+	github.com/nats-io/nats.go v1.49.0 // indirect
+	github.com/nats-io/nkeys v0.4.15 // indirect
+	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/oklog/ulid/v2 v2.1.2 // indirect
 	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
 )

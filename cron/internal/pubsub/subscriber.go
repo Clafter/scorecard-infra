@@ -23,6 +23,7 @@ import (
 
 	"gocloud.dev/pubsub/awssnssqs"
 	"gocloud.dev/pubsub/gcppubsub"
+	"gocloud.dev/pubsub/natspubsub"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/ossf/scorecard-infra/cron/data"
@@ -56,6 +57,8 @@ func CreateSubscriber(ctx context.Context, subscriptionURL string) (Subscriber, 
 		return createSQSSubscriber(ctx, subscriptionURL)
 	case gcppubsub.Scheme:
 		return createGCPSubscriber(ctx, subscriptionURL)
+	case natspubsub.Scheme:
+		return createNATSSubscriber(ctx, subscriptionURL)
 	default:
 		return nil, fmt.Errorf("%w: %q", errUnsupportedScheme, parsed.Scheme)
 	}
