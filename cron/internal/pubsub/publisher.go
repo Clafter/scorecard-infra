@@ -30,6 +30,10 @@ import (
 	_ "gocloud.dev/pubsub/awssnssqs"
 	// Needed to link in GCP drivers.
 	_ "gocloud.dev/pubsub/gcppubsub"
+	// Needed to link in the NATS driver so nats:// topics open. The
+	// publisher is already provider-agnostic; registering the driver is
+	// all the NATS backend needs on the publish side.
+	_ "gocloud.dev/pubsub/natspubsub"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/ossf/scorecard-infra/cron/data"
