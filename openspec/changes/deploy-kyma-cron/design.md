@@ -28,22 +28,28 @@ take.
      needs no new Go.
 2. **SAP Event Mesh (AMQP/MQTT).** BTP's native messaging. Requires a
    new gocloud pubsub driver (or a shim) registered in
-   `cron/internal/pubsub` — **new Go code**, which the AWS-equivalence
-   rule in `cron/README.md` explicitly exists to prevent before the AWS
-   cutover completes. Also an entitlement the subaccount does not have.
+   `cron/internal/pubsub` — **new Go code**. Previously forbidden by the
+   AWS-equivalence rule; that rule was **lifted** (`lift-aws-equivalence`),
+   so this is now in scope as its own engine change. Still needs an Event
+   Mesh entitlement the subaccount does not yet have.
 3. **A queue running in-cluster (e.g. NATS/RabbitMQ on Kyma).** Same
    new-driver problem as (2), plus owning a stateful workload.
 
-**Decision (provisional, for Fabian).** For a dev evaluation, **option
-1 (cross-cloud AWS SQS)** is the only one that does not require code the
-AWS-equivalence rule forbids. It is ugly but honest: it proves the
-pipeline runs on Kyma compute while leaving the queue where the code can
-already talk to it. Options 2/3 are a post-cutover project with their
-own change and an engine-code decision, not an infra change.
+**Decision.** Two phases, decided with Fabian:
 
-**This is the decision that most needs Fabian's sign-off** — it
-determines whether `deploy-kyma-cron` is even an infra-only change or
-needs an engine change first.
+- **Phase 1 (this change): cross-cloud AWS SQS.** The `awssqs://` driver
+  is already registered, so the pipeline runs on Kyma compute with zero
+  engine code. The cross-cloud AWS dependency is an explicit, documented
+  interim — sanctioned by `lift-aws-equivalence`, not a violation of it —
+  and the fastest path to a working cron pipeline on BTP.
+- **Phase 2 (separate engine change): SAP Event Mesh driver.** A native
+  AMQP pubsub driver in `cron/internal/pubsub`, which retires the AWS SQS
+  dependency. Now permitted (the equivalence rule is gone). Gated on an
+  Event Mesh entitlement from Sebastian; it is an engine change with its
+  own tests, not part of this infra change.
+
+**Resolved** (was: "most needs Fabian's sign-off"). Fabian chose
+SQS-first; Event Mesh is the follow-up.
 
 ## KC2 — Scan credentials: provisioning and custody are unresolved
 
@@ -72,10 +78,40 @@ them by hand as Kubernetes Secrets until the CSI driver lands.
    the worker reads env/secret keys, not Destinations, so this needs a
    code shim. Rejected (same AWS-equivalence problem as KC1).
 
-**Decision (provisional).** Option 1 (out-of-band K8s Secrets) for dev,
-matching the documented AWS interim. **Needs Fabian/Sebastian to
-actually provision a GitHub App** for the evaluation; until then the
-worker has nothing to authenticate with and the pipeline cannot scan.
+**Decision.** Option 1 (out-of-band Kubernetes Secret) for dev, with a
+**personal GitHub token** rather than a GitHub App for the initial
+evaluation:
+
+```sh
+# The operator runs this; the token never enters the repo or chat.
+kubectl -n scorecard-infra-dev create secret generic github \
+  --from-literal=token="$(gh auth token)" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+**Accepted trade-offs, flagged.** A personal token is the fastest way to
+get the worker past GitHub's unauthenticated rate limit (60 req/h) and
+prove the pipeline scans. But:
+
+- It carries the **operator's own identity** — every scan request counts
+  against that user, not a machine account. Fine for a dev smoke test,
+  not for sustained batch load.
+- `gh auth token` yields a **short-lived OAuth token** bound to the
+  operator's `gh` session; a long-running batch job can hit `401` when it
+  expires. The worker's `github` secret may need refreshing between runs.
+- The worker also reads `app_id` / `installation_id` / `app_key` for the
+  GitHub **App** path; with a plain token those keys are absent, so the
+  worker must be configured for token auth (verify the cron worker
+  accepts a bare `GITHUB_TOKEN` / `github.token` secret and does not hard
+  require the App key — checked at apply time).
+
+**Follow-up:** a dedicated GitHub App (machine identity, long-lived key)
+is the right production answer and its own provisioning task for
+Fabian/Sebastian. The personal token unblocks dev now.
+
+GitLab and Fastly secrets are omitted for dev — the evaluation scans the
+GitHub corpus only; the worker tolerates their absence for GitHub-only
+runs (verify at apply time).
 
 ## KC3 — BigQuery transfer is dropped for the BTP dev deployment
 
@@ -133,17 +169,30 @@ pipeline actually runs on BTP, a `btp-batch` capability is born in the
 change that applies it — not here, where nothing is deployed. Same
 reasoning as the baseline (K10).
 
-## Open questions for Fabian / Sebastian
+## Resolved decisions (were open questions)
 
-- **(KC1) Queue:** Accept cross-cloud AWS SQS for the dev evaluation, or
-  hold the cron pipeline until a post-cutover messaging decision? This
-  is the gating question.
-- **(KC2) Credentials:** Provision a GitHub App for the evaluation? Who
-  owns the key, and is the out-of-band K8s Secret approach acceptable
-  under the credentials policy?
-- **(KC1/entitlements) Event Mesh:** If cross-cloud SQS is rejected, is
-  SAP Event Mesh entitlement + an engine-code change (new pubsub
-  driver) in scope — and is that a separate engine change rather than
-  this infra change?
-- **(KC3) Analytics:** Is dropping the results-analytics sink acceptable
-  for the dev evaluation, or is a non-BigQuery replacement wanted?
+All four questions that gated this change are now decided:
+
+- **(KC1) Queue:** ✅ Cross-cloud AWS SQS accepted for the dev
+  evaluation (phase 1); SAP Event Mesh driver is a follow-up engine
+  change (phase 2), now permitted by `lift-aws-equivalence`.
+- **(KC2) Credentials:** ✅ Personal GitHub token (`gh auth token`) in an
+  out-of-band Kubernetes Secret for dev; a dedicated GitHub App is the
+  production follow-up. Trade-offs flagged in KC2.
+- **(KC1/entitlements) Event Mesh:** ✅ In scope as a separate engine
+  change (the equivalence rule was lifted). Gated on an Event Mesh
+  entitlement from Sebastian, pursued when phase 2 starts.
+- **(KC3) Analytics:** ✅ Dropped for dev; no BigQuery, no replacement
+  sink in this change.
+
+## Remaining verify-at-apply items
+
+- **SQS provisioning:** a dev AWS SQS queue and the AWS credentials the
+  Kyma workloads use to reach it (whose AWS account, which IAM policy).
+- **Worker token-auth:** confirm the cron worker accepts a bare
+  `github.token` secret without the GitHub App keys (`app_id`,
+  `installation_id`, `app_key`), and tolerates absent GitLab/Fastly
+  secrets for GitHub-only runs.
+- **Bucket name templating:** the generated `hcp-<uuid>` names come from
+  the binding secret (KC5); finalise ConfigMap templating when writing
+  the manifests.

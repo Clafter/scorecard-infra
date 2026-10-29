@@ -1,11 +1,12 @@
 # Proposal: Deploy the Scorecard batch (cron) pipeline to Kyma (dev)
 
-> **Status: DESIGN ONLY.** This change writes the proposal and the
-> decision records. It does **not** apply any manifest. Three
-> dependencies must be resolved first (a message queue, scan
-> credentials, and the BigQuery question); the design exists to make
-> those decisions explicit and reviewable before any cluster is
-> touched. See "Blockers" below.
+> **Status: BLOCKERS RESOLVED — apply pending.** This change wrote the
+> proposal and decision records while three dependencies were open
+> (message queue, scan credentials, BigQuery). All three are now
+> decided (see "Decisions" below): cross-cloud AWS SQS for the queue
+> (interim, sanctioned by `lift-aws-equivalence`), a personal GitHub
+> token for scan auth in dev, and BigQuery dropped. The manifests can
+> now be written and applied; that apply is the next working session.
 
 ## Why
 
@@ -87,12 +88,12 @@ AWS-equivalence rule in `cron/README.md` constrains all of the above.
 
 - **No apply, no deploy** in this change. Manifests are designed, not
   shipped.
-- **No Go changes.** Especially no new pubsub driver — that is the
-  thing the AWS-equivalence rule (`cron/README.md`: *"Keep the tree
-  equivalent to what `ossf/scorecard` builds until the production
-  cutover to AWS completes"*) exists to prevent, and it is not this
-  change's call to make.
-- **No BigQuery.** Per AGENTS.md.
+- **No Go changes in this change.** The SAP Event Mesh pubsub driver is
+  real engine work and lands as its own change (now permitted —
+  `lift-aws-equivalence` removed the rule that blocked it). This change
+  uses the already-registered `awssqs://` driver via a cross-cloud SQS
+  bridge, so it needs no new Go.
+- **No BigQuery.** Per AGENTS.md (KC3).
 
 ## Impact
 

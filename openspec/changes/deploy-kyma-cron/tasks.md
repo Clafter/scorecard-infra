@@ -42,9 +42,11 @@ Decisions in `design.md` (**KC1**–**KC6**). Rationale in `proposal.md`.
 - [x] 3.1 Record the four open questions for Fabian/Sebastian in
       `design.md` (queue, credentials, Event Mesh entitlement,
       analytics sink).
-- [ ] 3.2 Get answers. **Blocked on Fabian (architecture) and
-      Sebastian (entitlements/GitHub App).** This is the gate between
-      design and apply.
+- [x] 3.2 Get answers. **Resolved:** SQS-bridge first (KC1), personal
+      GitHub token for dev (KC2), Event Mesh as a follow-up engine
+      change (now permitted by `lift-aws-equivalence`), BigQuery dropped
+      (KC3). The apply phase (§4/§5) is unblocked; remaining items are
+      verify-at-apply, not decisions.
 
 ## 4. Manifests (apply phase — BLOCKED, not done in this change)
 
