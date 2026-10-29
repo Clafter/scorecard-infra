@@ -29,45 +29,40 @@ spec:
             - name: http
               containerPort: 8080
           env:
-            # --- api-results bucket: parts from the binding secret ---
-            - name: BUCKET
-              valueFrom:
-                secretKeyRef:
-                  name: scorecard-api-results-binding
-                  key: bucket
-            - name: BUCKET_REGION
-              valueFrom:
-                secretKeyRef:
-                  name: scorecard-api-results-binding
-                  key: region
-            # --- cron-results bucket: parts from its binding secret ---
-            - name: CRON_BUCKET
+            # Consolidated on the ONE cron-results bucket (deploy-kyma-cron
+            # KC7 + controller-metadata-before-publish). Object Store gives
+            # one hard-scoped credential per bucket, so API and cron worker
+            # must share a single bucket+credential to exchange results:
+            # the worker writes api-results/host/org/repo/results.json and
+            # the API reads the same bucket+prefix with the same credential.
+            # A separate api-results bucket would 403 the cross-read.
+            - name: RESULTS_BUCKET
               valueFrom:
                 secretKeyRef:
                   name: scorecard-cron-results-binding
                   key: bucket
-            - name: CRON_BUCKET_REGION
+            - name: RESULTS_BUCKET_REGION
               valueFrom:
                 secretKeyRef:
                   name: scorecard-cron-results-binding
                   key: region
-            # --- composed bucket URLs (KA2): env-var reference expansion ---
+            # Both the publish (POST) and read (GET) paths use the same
+            # bucket+prefix; the GET fallback points there too so a single
+            # credential serves every result.
             - name: SCORECARD_RESULTS_BUCKET_URL
-              value: "s3://$(BUCKET)?region=$(BUCKET_REGION)&awssdk=v2"
+              value: "s3://$(RESULTS_BUCKET)?region=$(RESULTS_BUCKET_REGION)&awssdk=v2&prefix=api-results/"
             - name: SCORECARD_CRON_RESULTS_BUCKET_URL
-              value: "s3://$(CRON_BUCKET)?region=$(CRON_BUCKET_REGION)&awssdk=v2"
-            # --- AWS credentials for the S3-backed Object Store (KA3, KA4) ---
-            # Dev: api-results credentials. KA4 flags that production needs
-            # per-bucket credentials; the cron fallback read may 403 here.
+              value: "s3://$(RESULTS_BUCKET)?region=$(RESULTS_BUCKET_REGION)&awssdk=v2&prefix=api-results/"
+            # --- AWS credentials: the cron-results bucket's own keypair ---
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: scorecard-api-results-binding
+                  name: scorecard-cron-results-binding
                   key: access_key_id
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: scorecard-api-results-binding
+                  name: scorecard-cron-results-binding
                   key: secret_access_key
           resources:
             requests:
