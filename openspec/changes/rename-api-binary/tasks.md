@@ -41,14 +41,14 @@
 - [x] 4.1 `make -C api scorecard-api` produces an executable at
       `api/scorecard-api`; running it with `--help` prints the server's
       usage (same as the old binary). **Verified locally.**
-- [ ] 4.2 `docker build -f api/Dockerfile .` succeeds; the resulting
+- [x] 4.2 `docker build -f api/Dockerfile .` succeeds; the resulting
       image lists `/usr/local/bin/scorecard-api` and no
-      `/usr/local/bin/scorecard-webapp`. **Deferred to CI** —
-      no local Docker daemon on the dev machine; `publish-images.yml`
-      exercises this on the fork after push.
-- [ ] 4.3 `docker run --rm <image> --help` prints the usage; running
+      `/usr/local/bin/scorecard-webapp`. **Verified in CI**
+      (`api-docker` job, PR #1, 1m54s).
+- [x] 4.3 `docker run --rm <image> --help` prints the usage; running
       the image with no args starts the server on port 8080 (same
-      behavior as before the rename). **Deferred to CI** (see 4.2).
+      behavior as before the rename). **Verified in CI** via the
+      `api-docker` job's smoke test.
 - [x] 4.4 `grep -rn "scorecard-webapp" api/ Makefile` returns only the
       upstream-provenance line in `api/README.md` and the regenerated
       swagger artifacts if any (none expected). No other matches.
@@ -56,10 +56,8 @@
       provenance line) and `api/initial-graft.md` (upstream import log);
       both are required by decision R3.
 - [x] 4.5 `make build`, `make test`, `make lint` all pass at repository
-      root. **`make build` and `make test` verified locally.** `make
-      lint` requires `golangci-lint` not installed on the dev machine;
-      `go vet ./...` and `gofmt -l .` both clean. Full linter run
-      deferred to CI.
+      root. **All three verified in CI** (PR #1): `build` 3m21s,
+      `test` 4m0s, `lint` (golangci-lint) 2m50s.
 - [ ] 4.6 After merge to the fork's `main`, `publish-images.yml`
       produces a `scorecard-api` image whose entrypoint binary is
       `scorecard-api` (verified with
