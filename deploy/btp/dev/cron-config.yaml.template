@@ -1,20 +1,24 @@
 # Scorecard batch pipeline — config (ConfigMap template). See
-# deploy-kyma-cron KC5 and KC7.
+# deploy-kyma-cron KC5/KC7 and cron-bucket-prefix.
 #
 # Mounted at /etc/scorecard/config.yaml by every cron workload. This is a
-# TEMPLATE: the two __*_BUCKET__ placeholders are the generated Object
-# Store bucket names (hcp-<uuid>), which are not stable literals and must
-# not be committed. deploy/btp/dev/apply-cron.sh fills them from the
-# binding secrets at apply time and creates the ConfigMap.
+# TEMPLATE: __CRON_BUCKET__/__CRON_REGION__ are the generated cron-results
+# Object Store bucket name (hcp-<uuid>) and region, which are not stable
+# literals and must not be committed. deploy/btp/dev/apply-cron.sh fills
+# them from the binding secret at apply time.
 #
-# Bucket allocation under the two-instance Object Store quota (golden
-# rules 2+3 — no new entitlement):
-#   cron-results instance  -> result-data, input, cii-data
-#   api-results  instance  -> api-results, raw-result-data
-# result-data and raw-result-data share the GetShardMetadataFilename key
-# space, so they MUST be different physical buckets; the split above keeps
-# them apart. input/cii-data live in their own key namespaces, so they
-# coexist with result-data in the cron-results bucket without collision.
+# Single-bucket layout (KC7 resolution, golden rules 1+2+3): all logical
+# buckets live in the ONE cron-results instance, separated by key prefix
+# (?prefix=…, added in cron-bucket-prefix). One bucket => one hard-scoped
+# S3 credential pair => one pod can write them all. No AWS SQS, no second
+# Object Store entitlement.
+#
+#   role           prefix
+#   result-data    result-data/
+#   raw-result     raw/            (own prefix: no longer collides with result-data)
+#   input          input/
+#   cii-data       cii/
+#   api-results    api-results/
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -39,16 +43,15 @@ data:
     # for the dev evaluation (golden rule 2).
     metric-exporter: printer
 
-    # Shard + completion state, in the cron-results bucket.
-    result-data-bucket-url: s3://__CRON_BUCKET__?region=__CRON_REGION__&awssdk=v2
+    # All roles share the cron-results bucket under distinct prefixes.
+    result-data-bucket-url: s3://__CRON_BUCKET__?region=__CRON_REGION__&awssdk=v2&prefix=result-data/
 
-    # Project inventory, read-only, cron-results bucket (its own key space).
-    input-bucket-url: s3://__CRON_BUCKET__?region=__CRON_REGION__&awssdk=v2
+    input-bucket-url: s3://__CRON_BUCKET__?region=__CRON_REGION__&awssdk=v2&prefix=input/
     input-bucket-prefix:
 
     additional-params:
       input-bucket:
-        url: s3://__CRON_BUCKET__?region=__CRON_REGION__&awssdk=v2
+        url: s3://__CRON_BUCKET__?region=__CRON_REGION__&awssdk=v2&prefix=input/
         prefix:
         prefix-file:
 
@@ -56,13 +59,11 @@ data:
         # The running API's public host (deploy-kyma-api). Used for CDN
         # purge requests; harmless if the purge path is unused in dev.
         api-base-url: https://scorecard-api.bfcc835.kyma.ondemand.com
-        # The bucket the live API reads as its fallback: the api-results
-        # instance. This is the handoff between the cron pipeline and the
-        # serving API.
-        api-results-bucket-url: s3://__API_BUCKET__?region=__API_REGION__&awssdk=v2
+        # The prefix the live API reads as its fallback. The API's
+        # SCORECARD_CRON_RESULTS_BUCKET_URL must point at this same
+        # bucket+prefix (wired in apply-cron.sh / the API deployment).
+        api-results-bucket-url: s3://__CRON_BUCKET__?region=__CRON_REGION__&awssdk=v2&prefix=api-results/
         blacklisted-checks: CI-Tests,Contributors,Dependency-Update-Tool,Vulnerabilities,Webhooks
-        # CII data, cron-results bucket (own key namespace).
-        cii-data-bucket-url: s3://__CRON_BUCKET__?region=__CRON_REGION__&awssdk=v2
-        # Raw results share result-data's key space, so they go in the
-        # api-results bucket to avoid colliding with result-data.
-        raw-result-data-bucket-url: s3://__API_BUCKET__?region=__API_REGION__&awssdk=v2
+        cii-data-bucket-url: s3://__CRON_BUCKET__?region=__CRON_REGION__&awssdk=v2&prefix=cii/
+        # Own prefix: no longer collides with result-data's keys.
+        raw-result-data-bucket-url: s3://__CRON_BUCKET__?region=__CRON_REGION__&awssdk=v2&prefix=raw/

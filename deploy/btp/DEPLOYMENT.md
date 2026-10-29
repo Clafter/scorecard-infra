@@ -152,16 +152,46 @@ Manifests in `deploy/btp/dev/` (applied via `apply-cron.sh`):
   keypair cannot write the api bucket and vice versa (`AccessDenied`,
   both directions, proven via in-cluster aws-cli pods).
 
-**OPEN DECISION (golden rule 4 stop) — KC7 bucket/credential model:**
-The worker writes three bucket roles (`api-results`, `result-data`,
-`raw-result-data`) where `result-data`/`raw` collide on identical keys
-and `api-results` lives in a separately-credentialed bucket — but a pod
-has one keypair and each bucket is hard-isolated. Resolving this needs
-either a code change to the worker's write path (golden rule 2) or an
-entitlement change (golden rule 3); the two rules conflict, so the
-choice is surfaced to the user rather than guessed. Full analysis in
-`openspec/changes/deploy-kyma-cron/design.md` KC7.
+**RESOLVED — KC7 (golden rule 4 decision taken by the user: option A).**
+The worker's multi-bucket credential problem is solved by a single
+Object Store instance holding every result role under a distinct key
+prefix (`cron-bucket-prefix` engine change). All roles point at the one
+`cron-results` bucket (`?prefix=result-data/`, `raw/`, `input/`, `cii/`,
+`api-results/`); one hard-scoped keypair writes them all, no collisions,
+no new entitlement (golden rules 1+2+3).
 
-**What is NOT blocked and is live:** the NATS queue and RBAC. The
-controller/worker manifests are complete and validated; applying them
-waits on the KC7 decision (which bucket layout the worker writes to).
+**Live on the cluster (verified 2026-10-29):**
+- NATS broker 2/2, `/healthz` ok.
+- ConfigMap `scorecard-config` rendered from the binding secret, all
+  bucket URLs carry their prefix.
+- `scorecard-batch-controller` CronJob installed (Mon 02:00 UTC).
+- `scorecard-batch-worker` Deployment rolled out to **1/2** — the Istio
+  sidecar is ready; the worker container is in
+  `CreateContainerConfigError` with `secret "github" not found`. This is
+  the single remaining step, and it is the user's to do (the GitHub
+  token must not pass through the agent — credentials policy).
+
+**The one manual step left:**
+```sh
+export KUBECONFIG=~/.kube/scorecard-infra/kubeconfig-kyma-dev.yaml
+kubectl -n scorecard-infra-dev create secret generic github \
+  --from-literal=token="$(gh auth token)" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n scorecard-infra-dev rollout status deploy/scorecard-batch-worker
+```
+Then trigger a run without waiting for Monday:
+```sh
+kubectl -n scorecard-infra-dev create job \
+  --from=cronjob/scorecard-batch-controller cron-manual-$(date +%s)
+```
+
+**ResourceQuota note:** raised from 4 CPU / 8Gi to 8 CPU / 16Gi once the
+Istio sidecar overhead (~1 CPU + ~1Gi limits per injected pod) was
+measured against three workloads. A namespace-internal limit, not a BTP
+entitlement.
+
+**A quota gotcha worth remembering:** the baseline ResourceQuota forces
+every container to set BOTH `requests` and `limits` for cpu and memory —
+a pod missing `limits.cpu` is rejected with `must specify limits.cpu`.
+The upstream cron manifests deliberately omit the worker's CPU limit;
+on a quota'd namespace that must be added back.

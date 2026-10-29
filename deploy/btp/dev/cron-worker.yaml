@@ -3,7 +3,8 @@
 # Consumes scan requests from the in-cluster NATS queue, scans each
 # repository, writes results to the buckets in the mounted config.
 # Adapted from cron/k8s/worker.yaml (the AWS version):
-#   - replicas 14 -> 2 (dev, fits the baseline ResourceQuota; golden rule 2)
+#   - replicas 14 -> 1 (dev, fits the baseline ResourceQuota alongside the
+#     API and NATS pods; golden rule 2)
 #   - EKS Pod Identity + custom node pools dropped (Kyma has neither here)
 #   - queue is nats:// in-cluster, not SQS
 #   - GitHub auth is a personal token (GITHUB_AUTH_TOKEN), not a GitHub App
@@ -20,7 +21,7 @@ metadata:
     app.kubernetes.io/name: scorecard-batch-worker
     app.kubernetes.io/part-of: scorecard-infra
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: scorecard-batch-worker
@@ -47,10 +48,15 @@ spec:
               drop: [ALL]
           resources:
             requests:
-              cpu: 500m
-              memory: 2Gi
+              cpu: 300m
+              memory: 1Gi
             limits:
-              memory: 3Gi
+              # The upstream worker sets no CPU limit on purpose (throttling
+              # a scan makes it slow, not safe). The baseline ResourceQuota
+              # requires a limits.cpu, so set a generous one that does not
+              # bind in practice (golden rule 2: honour the quota minimally).
+              cpu: "1"
+              memory: 2Gi
           env:
             # In-cluster NATS queue (add-nats-pubsub-driver).
             - name: NATS_SERVER_URL

@@ -198,7 +198,21 @@ All four questions that gated this change are now decided:
   the binding secrets; `apply-cron.sh` fills the ConfigMap template at
   apply time (KC5).
 
-## KC7 — Bucket allocation under a 2-instance quota with hard credential isolation (STOP: decision needed)
+## KC7 — Bucket allocation under a 2-instance quota with hard credential isolation (RESOLVED via option A)
+
+**Resolution (user decision, golden rule 4 → option A).** Instead of a
+third Object Store entitlement, a minimal engine change
+(`cron-bucket-prefix`) teaches `cron/data` to honour a `?prefix=` query
+parameter on bucket URLs. Every logical bucket role then lives in the
+**one** `cron-results` instance under a distinct key prefix, written by
+its single hard-scoped keypair. No collisions, no AWS, no new
+entitlement — golden rules 1+2+3 all satisfied. Deployed and verified
+live 2026-10-29 (all five bucket URLs in the ConfigMap carry their
+prefix; the worker reaches the one bucket with one credential pair).
+
+The analysis below is kept for the record.
+
+### Original analysis (why it was a stop)
 
 **Context.** The cron pipeline uses five logical buckets: `result-data`,
 `raw-result-data`, `input`, `cii-data`, `api-results`. The subaccount has

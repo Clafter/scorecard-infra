@@ -48,26 +48,34 @@ Decisions in `design.md` (**KC1**–**KC6**). Rationale in `proposal.md`.
       (KC3). The apply phase (§4/§5) is unblocked; remaining items are
       verify-at-apply, not decisions.
 
-## 4. Manifests (apply phase — BLOCKED, not done in this change)
+## 4. Manifests (apply phase — DONE)
 
-- [ ] 4.1 `deploy/btp/cron/rbac.yaml` — ServiceAccounts + the
-      controller's Role/RoleBinding (KC4). **Blocked on KC1.**
-- [ ] 4.2 `deploy/btp/cron/config.yaml` — ConfigMap with BTP bucket
-      URLs (KC5). **Blocked on KC1.**
-- [ ] 4.3 `deploy/btp/cron/controller-cronjob.yaml` — the producer
-      CronJob. **Blocked on KC1 (queue URL).**
-- [ ] 4.4 `deploy/btp/cron/worker-deployment.yaml` — the consumer, env
-      from the cron-results binding + scan-credential secrets.
-      **Blocked on KC1 + KC2.**
-- [ ] 4.5 `deploy/btp/cron/cii-cronjob.yaml` — CII enrichment.
-      **Blocked on KC1.**
-- [ ] 4.6 No `bq-transfer` manifest (KC3).
+Manifests live in `deploy/btp/dev/` (same tree as the baseline/API), not
+a separate `cron/` subdir — one kustomize-able directory per environment.
 
-## 5. Verification (apply phase — BLOCKED)
+- [x] 4.1 `cron-rbac.yaml` — ServiceAccounts + the controller's
+      Role/RoleBinding (KC4). Applied.
+- [x] 4.2 `cron-config.yaml.template` + `apply-cron.sh` — ConfigMap
+      rendered from the binding secret, single-bucket prefix layout
+      (KC5/KC7). Applied.
+- [x] 4.3 `cron-controller.yaml` — the producer CronJob (NATS publish +
+      worker rollout). Applied (schedule Mon 02:00 UTC).
+- [x] 4.4 `cron-worker.yaml` — the consumer, env from the cron-results
+      binding + `GITHUB_AUTH_TOKEN`. Applied; rolled out to 1/2, waiting
+      only on the `github` secret (KC2, user-provided).
+- [x] 4.5 `cron-nats.yaml` — the in-cluster NATS broker (KC1). Applied,
+      2/2 Running.
+- [x] 4.6 No `bq-transfer` manifest (KC3).
+
+## 5. Verification
 
 - [ ] 5.1 Controller CronJob publishes to the queue; worker consumes.
-      **Blocked.**
-- [ ] 5.2 Worker writes a result into `scorecard-cron-results`; the API
-      then serves it via its cron fallback path. **Blocked.**
-- [ ] 5.3 `make lint` / `make test` green (will be no-ops once the
-      manifests are added; no Go changes).
+      **Pending the `github` secret** (user step), then a manual job
+      trigger.
+- [ ] 5.2 Worker writes a result under the `api-results/` prefix; the
+      API serves it via its cron fallback path. **Pending 5.1.**
+- [x] 5.3 `make test` (`-race`) green across the repo; `cron-bucket-prefix`
+      engine change covered by `TestOpenBucketPrefix`.
+- [x] 5.4 All cron manifests validate (`--dry-run`) and are applied; the
+      only not-Ready workload is the worker, blocked solely on the
+      user-provided `github` secret.

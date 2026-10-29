@@ -15,8 +15,12 @@ metadata:
     environment: dev
     istio-injection: enabled
 ---
-# Quota sized for the API + a handful of cron pods. Revisit when the
-# first workload lands and we have real resource numbers.
+# Quota sized for the live dev workloads with real numbers (2026-10-29):
+# API + NATS + cron worker + the weekly controller CronJob, each with an
+# Istio sidecar (~1 CPU / ~1Gi limits per sidecar — the dominant term).
+# Raised from the initial 4 CPU / 8Gi once the sidecar overhead was
+# measured against three Istio-injected workloads (golden rule 2: fit the
+# real need, not a guess).
 apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -25,7 +29,7 @@ metadata:
 spec:
   hard:
     pods: "20"
-    requests.cpu: "2"
-    requests.memory: 4Gi
-    limits.cpu: "4"
-    limits.memory: 8Gi
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi

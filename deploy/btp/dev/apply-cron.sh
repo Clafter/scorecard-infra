@@ -26,20 +26,16 @@ secret_val() {
   kubectl -n "$NS" get secret "$1" -o jsonpath="{.data.$2}" | base64 -d
 }
 
-echo "== reading bucket names from binding secrets =="
+echo "== reading cron-results bucket from binding secret =="
 CRON_BUCKET=$(secret_val scorecard-cron-results-binding bucket)
 CRON_REGION=$(secret_val scorecard-cron-results-binding region)
-API_BUCKET=$(secret_val scorecard-api-results-binding bucket)
-API_REGION=$(secret_val scorecard-api-results-binding region)
 
 echo "   cron-results: $CRON_BUCKET ($CRON_REGION)"
-echo "   api-results:  $API_BUCKET ($API_REGION)"
+echo "   (single-bucket layout, KC7: all roles under prefixes in this one bucket)"
 
 echo "== rendering ConfigMap from template =="
 sed -e "s/__CRON_BUCKET__/${CRON_BUCKET}/g" \
     -e "s/__CRON_REGION__/${CRON_REGION}/g" \
-    -e "s/__API_BUCKET__/${API_BUCKET}/g" \
-    -e "s/__API_REGION__/${API_REGION}/g" \
     "$HERE/cron-config.yaml.template" | kubectl apply -f -
 
 echo "== github secret check =="
