@@ -34,53 +34,57 @@ import (
 
 var headSHA = clients.HeadSHA
 
-func publishToRepoRequestTopic(iter data.Iterator, topicPublisher pubsub.Publisher,
-	shardSize int, datetime time.Time,
-) (int32, error) {
-	var shardNum int32
-	request := data.ScorecardBatchRequest{
-		JobTime:  timestamppb.New(datetime),
-		ShardNum: &shardNum,
+// buildShards materialises the iterator into a slice of batch requests of
+// at most shardSize repos each. The count is known once this returns, which
+// lets the caller write the run's shard metadata BEFORE publishing anything
+// -- required on at-most-once transports (in-cluster NATS) where a worker's
+// nack of a metadata-less request is a no-op and drops the request. See
+// openspec/changes/controller-metadata-before-publish.
+func buildShards(iter data.Iterator, shardSize int, datetime time.Time) ([]*data.ScorecardBatchRequest, error) {
+	var shards []*data.ScorecardBatchRequest
+	newShard := func(n int32) *data.ScorecardBatchRequest {
+		shardNum := n
+		return &data.ScorecardBatchRequest{
+			JobTime:  timestamppb.New(datetime),
+			ShardNum: &shardNum,
+		}
 	}
-
-	// Create and send batch requests of repoURLs of size `ShardSize`:
-	// * Iterate through incoming repoURLs until `request` has len(Repos) of size `ShardSize`.
-	// * Publish request to PubSub topic.
-	// * Clear request.Repos and increment shardNum.
+	current := newShard(0)
 	for iter.HasNext() {
 		repoURL, err := iter.Next()
 		if err != nil {
-			return shardNum, fmt.Errorf("error reading repoURL: %w", err)
+			return nil, fmt.Errorf("error reading repoURL: %w", err)
 		}
-		request.Repos = append(request.GetRepos(), &data.Repo{
+		current.Repos = append(current.GetRepos(), &data.Repo{
 			Url: &repoURL.Repo,
 			// TODO(controller): pass in non-HEAD commitSHA here.
 			Commit:   &headSHA,
 			Metadata: repoURL.Metadata.ToString(),
 		})
-		if len(request.GetRepos()) < shardSize {
+		if len(current.GetRepos()) < shardSize {
 			continue
 		}
-		if err := topicPublisher.Publish(&request); err != nil {
-			return shardNum, fmt.Errorf("error running topicPublisher.Publish: %w", err)
-		}
-		request.Repos = nil
-		shardNum++
+		shards = append(shards, current)
+		current = newShard(int32(len(shards)))
 	}
-	// Check if more repoURLs are pending to be sent in `request`.
-	if len(request.GetRepos()) > 0 {
-		if err := topicPublisher.Publish(&request); err != nil {
-			return shardNum, fmt.Errorf("error running topicPublisher.Publish: %w", err)
-		}
-	} else {
-		// shardNum incremented for an empty shard, decrement.
-		shardNum--
+	// Flush a trailing partial shard.
+	if len(current.GetRepos()) > 0 {
+		shards = append(shards, current)
 	}
+	return shards, nil
+}
 
-	if err := topicPublisher.Close(); err != nil {
-		return shardNum, fmt.Errorf("error running topicPublisher.Close: %w", err)
+// publishShards publishes the pre-built shards and closes the publisher.
+func publishShards(shards []*data.ScorecardBatchRequest, topicPublisher pubsub.Publisher) error {
+	for _, request := range shards {
+		if err := topicPublisher.Publish(request); err != nil {
+			return fmt.Errorf("error running topicPublisher.Publish: %w", err)
+		}
 	}
-	return shardNum, nil
+	if err := topicPublisher.Close(); err != nil {
+		return fmt.Errorf("error running topicPublisher.Close: %w", err)
+	}
+	return nil
 }
 
 func localFiles(filenames []string) (data.Iterator, error) {
@@ -146,11 +150,20 @@ func main() {
 		panic(err)
 	}
 
-	shardNum, err := publishToRepoRequestTopic(reader, topicPublisher, shardSize, t)
+	shards, err := buildShards(reader, shardSize, t)
 	if err != nil {
 		panic(err)
 	}
-	// Populate `.shard_metadata` file.
+	shardNum := int32(len(shards)) - 1
+	if shardNum < 0 {
+		shardNum = 0
+	}
+
+	// Write the `.shard_metadata` marker(s) BEFORE publishing, so a worker
+	// that receives a request always finds the marker and never nacks it.
+	// On at-most-once NATS a nack is a no-op, so a metadata-less request
+	// would be dropped forever. See
+	// openspec/changes/controller-metadata-before-publish.
 	metadata := data.ShardMetadata{
 		NumShard:  new(int32),
 		ShardLoc:  new(string),
@@ -179,5 +192,10 @@ func main() {
 		if err != nil {
 			panic(fmt.Errorf("error writing to BlobStore raw: %w", err))
 		}
+	}
+
+	// Now publish; every request's metadata is already in place.
+	if err := publishShards(shards, topicPublisher); err != nil {
+		panic(err)
 	}
 }
