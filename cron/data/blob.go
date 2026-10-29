@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"time"
 
 	"gocloud.dev/blob"
@@ -40,6 +41,46 @@ var (
 	errShortBlobName = errors.New("input key length is shorter than expected")
 	errParseBlobName = errors.New("error parsing input blob name")
 )
+
+// openBucket opens a blob bucket from a URL, with one addition over
+// blob.OpenBucket: an optional `prefix` query parameter. When present, the
+// returned bucket is wrapped so every key is transparently namespaced under
+// that prefix (blob.PrefixedBucket), and the `prefix` parameter is stripped
+// before the URL reaches the driver.
+//
+// This lets several logical buckets share one physical bucket under distinct
+// prefixes -- needed on SAP BTP, where Object Store gives one hard-scoped
+// credential per bucket and a single-credential pod must address all of the
+// pipeline's buckets through one instance (see deploy-kyma-cron KC7). A URL
+// without `prefix` behaves exactly as blob.OpenBucket did, so the SQS/GCP
+// deployments are unaffected.
+func openBucket(ctx context.Context, bucketURL string) (*blob.Bucket, error) {
+	parsed, err := url.Parse(bucketURL)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing bucket URL: %w", err)
+	}
+
+	q := parsed.Query()
+	prefix := q.Get("prefix")
+	if prefix == "" {
+		// No prefix: open the URL as-is, unchanged behaviour.
+		bucket, err := blob.OpenBucket(ctx, bucketURL)
+		if err != nil {
+			return nil, fmt.Errorf("error from blob.OpenBucket: %w", err)
+		}
+		return bucket, nil
+	}
+
+	// Strip `prefix` so the driver sees only parameters it understands.
+	q.Del("prefix")
+	parsed.RawQuery = q.Encode()
+
+	bucket, err := blob.OpenBucket(ctx, parsed.String())
+	if err != nil {
+		return nil, fmt.Errorf("error from blob.OpenBucket: %w", err)
+	}
+	return blob.PrefixedBucket(bucket, prefix), nil
+}
 
 func blobKeysPrefix(ctx context.Context, bucket *blob.Bucket, filePrefix string) ([]string, error) {
 	keys := make([]string, 0)
@@ -62,9 +103,9 @@ func blobKeysPrefix(ctx context.Context, bucket *blob.Bucket, filePrefix string)
 // GetBlobKeysWithPrefix returns all object keys for a given bucketURL which start with prefix.
 // The prefix can be used to specify directories.
 func GetBlobKeysWithPrefix(ctx context.Context, bucketURL, filePrefix string) ([]string, error) {
-	bucket, err := blob.OpenBucket(ctx, bucketURL)
+	bucket, err := openBucket(ctx, bucketURL)
 	if err != nil {
-		return nil, fmt.Errorf("error from blob.OpenBucket: %w", err)
+		return nil, err
 	}
 	defer bucket.Close()
 	return blobKeysPrefix(ctx, bucket, filePrefix)
@@ -77,9 +118,9 @@ func GetBlobKeys(ctx context.Context, bucketURL string) ([]string, error) {
 
 // GetBlobContent returns the file content given a bucketURL and object key.
 func GetBlobContent(ctx context.Context, bucketURL, key string) ([]byte, error) {
-	bucket, err := blob.OpenBucket(ctx, bucketURL)
+	bucket, err := openBucket(ctx, bucketURL)
 	if err != nil {
-		return nil, fmt.Errorf("error from blob.OpenBucket: %w", err)
+		return nil, err
 	}
 	defer bucket.Close()
 
@@ -92,9 +133,9 @@ func GetBlobContent(ctx context.Context, bucketURL, key string) ([]byte, error) 
 
 // BlobExists checks whether a given `bucketURL/key` blob exists.
 func BlobExists(ctx context.Context, bucketURL, key string) (bool, error) {
-	bucket, err := blob.OpenBucket(ctx, bucketURL)
+	bucket, err := openBucket(ctx, bucketURL)
 	if err != nil {
-		return false, fmt.Errorf("error from blob.OpenBucket: %w", err)
+		return false, err
 	}
 	defer bucket.Close()
 
@@ -107,9 +148,9 @@ func BlobExists(ctx context.Context, bucketURL, key string) (bool, error) {
 
 // WriteToBlobStore creates and writes data to filename in bucketURL.
 func WriteToBlobStore(ctx context.Context, bucketURL, filename string, data []byte) error {
-	bucket, err := blob.OpenBucket(ctx, bucketURL)
+	bucket, err := openBucket(ctx, bucketURL)
 	if err != nil {
-		return fmt.Errorf("error from blob.OpenBucket: %w", err)
+		return err
 	}
 	defer bucket.Close()
 

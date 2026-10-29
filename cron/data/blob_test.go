@@ -171,6 +171,63 @@ func TestBlobKeysPrefix(t *testing.T) {
 	}
 }
 
+// TestOpenBucketPrefix verifies the prefix query parameter added for the BTP
+// single-bucket layout (cron-bucket-prefix / deploy-kyma-cron KC7): a URL
+// with ?prefix=p/ namespaces every key under p/, and a URL without it writes
+// at the bucket root unchanged. Uses a temp fileblob bucket and inspects the
+// raw on-disk keys through an unprefixed handle, so the prefixing is proven
+// end to end rather than by round-trip alone.
+func TestOpenBucketPrefix(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	absBucketURL := "file:///" + filepath.ToSlash(dir)
+	ctx := t.Context()
+
+	// Write through a prefixed URL.
+	if err := WriteToBlobStore(ctx, absBucketURL+"?prefix=role-a/", "shard.json", []byte("a")); err != nil {
+		t.Fatalf("WriteToBlobStore prefixed: %v", err)
+	}
+	// Write the SAME key through a different prefix: must not collide.
+	if err := WriteToBlobStore(ctx, absBucketURL+"?prefix=role-b/", "shard.json", []byte("b")); err != nil {
+		t.Fatalf("WriteToBlobStore prefixed (b): %v", err)
+	}
+	// Write with no prefix: lands at the root.
+	if err := WriteToBlobStore(ctx, absBucketURL, "root.json", []byte("r")); err != nil {
+		t.Fatalf("WriteToBlobStore unprefixed: %v", err)
+	}
+
+	// Inspect the raw keys through an UNprefixed handle.
+	rawBucket, err := fileblob.OpenBucket(dir, nil)
+	if err != nil {
+		t.Fatalf("fileblob.OpenBucket: %v", err)
+	}
+	defer rawBucket.Close()
+	gotKeys, err := blobKeysPrefix(ctx, rawBucket, "")
+	if err != nil {
+		t.Fatalf("blobKeysPrefix: %v", err)
+	}
+
+	want := map[string]bool{"role-a/shard.json": true, "role-b/shard.json": true, "root.json": true}
+	if len(gotKeys) != len(want) {
+		t.Fatalf("raw keys = %v, want keys %v", gotKeys, want)
+	}
+	for _, k := range gotKeys {
+		if !want[k] {
+			t.Errorf("unexpected raw key %q (prefix not applied as expected)", k)
+		}
+	}
+
+	// A prefixed read sees its own key by the unprefixed name.
+	got, err := GetBlobContent(ctx, absBucketURL+"?prefix=role-a/", "shard.json")
+	if err != nil {
+		t.Fatalf("GetBlobContent prefixed: %v", err)
+	}
+	if string(got) != "a" {
+		t.Errorf("prefixed read: got %q, want %q", got, "a")
+	}
+}
+
 func TestBlobExists(t *testing.T) {
 	t.Parallel()
 	testcases := []struct {
