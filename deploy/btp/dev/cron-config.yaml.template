@@ -1,0 +1,68 @@
+# Scorecard batch pipeline — config (ConfigMap template). See
+# deploy-kyma-cron KC5 and KC7.
+#
+# Mounted at /etc/scorecard/config.yaml by every cron workload. This is a
+# TEMPLATE: the two __*_BUCKET__ placeholders are the generated Object
+# Store bucket names (hcp-<uuid>), which are not stable literals and must
+# not be committed. deploy/btp/dev/apply-cron.sh fills them from the
+# binding secrets at apply time and creates the ConfigMap.
+#
+# Bucket allocation under the two-instance Object Store quota (golden
+# rules 2+3 — no new entitlement):
+#   cron-results instance  -> result-data, input, cii-data
+#   api-results  instance  -> api-results, raw-result-data
+# result-data and raw-result-data share the GetShardMetadataFilename key
+# space, so they MUST be different physical buckets; the split above keeps
+# them apart. input/cii-data live in their own key namespaces, so they
+# coexist with result-data in the cron-results bucket without collision.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scorecard-config
+  namespace: scorecard-infra-dev
+  labels:
+    app.kubernetes.io/part-of: scorecard-infra
+data:
+  config.yaml: |
+    # Read only by the Stackdriver exporter and the BigQuery transfer job,
+    # neither of which runs on BTP. Kept non-empty: an absent value trips
+    # ErrEmptyConfigValue if anything reaches for it.
+    project-id: scorecard-infra-dev
+
+    completion-threshold: 0.99
+    shard-size: 10
+    webhook-url:
+
+    # printer: the in-tree no-backend metric exporter. Not stackdriver
+    # (GCP) and not empty (a blank trips ErrEmptyConfigValue at worker
+    # start-up -> CrashLoopBackOff). A BTP-native exporter is out of scope
+    # for the dev evaluation (golden rule 2).
+    metric-exporter: printer
+
+    # Shard + completion state, in the cron-results bucket.
+    result-data-bucket-url: s3://__CRON_BUCKET__?region=__CRON_REGION__&awssdk=v2
+
+    # Project inventory, read-only, cron-results bucket (its own key space).
+    input-bucket-url: s3://__CRON_BUCKET__?region=__CRON_REGION__&awssdk=v2
+    input-bucket-prefix:
+
+    additional-params:
+      input-bucket:
+        url: s3://__CRON_BUCKET__?region=__CRON_REGION__&awssdk=v2
+        prefix:
+        prefix-file:
+
+      scorecard:
+        # The running API's public host (deploy-kyma-api). Used for CDN
+        # purge requests; harmless if the purge path is unused in dev.
+        api-base-url: https://scorecard-api.bfcc835.kyma.ondemand.com
+        # The bucket the live API reads as its fallback: the api-results
+        # instance. This is the handoff between the cron pipeline and the
+        # serving API.
+        api-results-bucket-url: s3://__API_BUCKET__?region=__API_REGION__&awssdk=v2
+        blacklisted-checks: CI-Tests,Contributors,Dependency-Update-Tool,Vulnerabilities,Webhooks
+        # CII data, cron-results bucket (own key namespace).
+        cii-data-bucket-url: s3://__CRON_BUCKET__?region=__CRON_REGION__&awssdk=v2
+        # Raw results share result-data's key space, so they go in the
+        # api-results bucket to avoid colliding with result-data.
+        raw-result-data-bucket-url: s3://__API_BUCKET__?region=__API_REGION__&awssdk=v2

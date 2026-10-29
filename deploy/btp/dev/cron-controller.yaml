@@ -1,0 +1,106 @@
+# Scorecard batch pipeline — controller (producer). See deploy-kyma-cron.
+#
+# Weekly CronJob: shards the project inventory, publishes scan requests to
+# the in-cluster NATS queue, then rolls the worker Deployment. Adapted
+# from cron/k8s/controller.yaml (the AWS version): EKS Pod Identity and
+# the custom node pools are dropped (Kyma has neither here); the queue URL
+# is nats:// in-cluster; S3 credentials come from the cron-results binding
+# secret (golden rule 1 — no AWS APIs beyond the S3 protocol the binding
+# provides).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: scorecard-batch-controller
+  namespace: scorecard-infra-dev
+  labels:
+    app.kubernetes.io/part-of: scorecard-infra
+spec:
+  # 02:00 UTC on Monday, matching upstream.
+  schedule: "0 2 * * 1"
+  concurrencyPolicy: "Forbid"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: scorecard-batch-controller
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: controller
+              image: ghcr.io/clafter/scorecard-batch-controller:main
+              args: [
+                "--config=/etc/scorecard/config.yaml",
+                "cron/internal/data/projects.csv",
+              ]
+              imagePullPolicy: Always
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              env:
+                - name: GOMEMLIMIT
+                  value: "950MiB"
+                # In-cluster NATS queue (add-nats-pubsub-driver). The driver
+                # reads the server from NATS_SERVER_URL; the topic URL names
+                # the subject.
+                - name: NATS_SERVER_URL
+                  value: "nats://scorecard-nats.scorecard-infra-dev.svc.cluster.local:4222"
+                - name: SCORECARD_REQUEST_TOPIC_URL
+                  value: "nats://scorecard-batch"
+                # S3 credentials for the cron-results bucket.
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: scorecard-cron-results-binding
+                      key: access_key_id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: scorecard-cron-results-binding
+                      key: secret_access_key
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 1Gi
+                limits:
+                  memory: 1Gi
+              volumeMounts:
+                - name: config-volume
+                  mountPath: /etc/scorecard
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+            - name: worker-update
+              image: bitnami/kubectl:1.31
+              command:
+                - "kubectl"
+                - "rollout"
+                - "restart"
+                - "deployment/scorecard-batch-worker"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              env:
+                - name: HOME
+                  value: /tmp
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 128Mi
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: config-volume
+              configMap:
+                name: scorecard-config
+            - name: tmp
+              emptyDir: {}
