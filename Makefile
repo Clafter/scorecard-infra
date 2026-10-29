@@ -121,8 +121,8 @@ lint: ## Run golangci-lint
 # are relative to api/ (design W5: upstream layout intact). These delegate to it
 # so the repository root stays the single entry point.
 .PHONY: api-build api-swagger api-docker api-docker-smoke
-api-build: ## Build the results API binary (api/scorecard-webapp)
-	$(MAKE) -C api scorecard-webapp
+api-build: ## Build the results API binary (api/scorecard-api)
+	$(MAKE) -C api scorecard-api
 
 api-swagger: ## Regenerate the API server and client from api/openapi.yaml
 api-swagger: check-swagger

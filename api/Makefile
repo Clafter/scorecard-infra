@@ -6,14 +6,14 @@ include Makefile.swagger
 VERSION_PKG=github.com/ossf/scorecard-infra/api/app/server
 LDFLAGS=-X $(VERSION_PKG).gitVersion=$(GIT_VERSION) -X $(VERSION_PKG).gitCommit=$(GIT_HASH) -w -extldflags
 
-scorecard-webapp: main.go app/server/*.go ## Runs go build on repo
-	# Run go build and generate scorecard-webapp executable
-	CGO_ENABLED=0 go build -trimpath -a -tags netgo -ldflags '$(LDFLAGS)' -o scorecard-webapp
+scorecard-api: main.go app/server/*.go ## Runs go build on repo
+	# Run go build and generate scorecard-api executable
+	CGO_ENABLED=0 go build -trimpath -a -tags netgo -ldflags '$(LDFLAGS)' -o scorecard-api
 
 # The build context is the repository root, not this directory: go.mod lives
 # there. Prefer `make api-docker` from the root, which is what CI runs.
-scorecard-webapp-docker: scorecard-webapp Dockerfile
-	DOCKER_BUILDKIT=1 docker build .. --file Dockerfile --tag scorecard-webapp
+scorecard-api-docker: scorecard-api Dockerfile
+	DOCKER_BUILDKIT=1 docker build .. --file Dockerfile --tag scorecard-api
 
 # Upstream had a `linter` target here invoking golangci-lint against a
 # .golangci.yml in this directory. That config was not imported: golangci-lint

@@ -21,7 +21,7 @@ that save you an hour.
 | `api/openapi.yaml` | The published contract. Run `make api-swagger` after editing it; `swagger-verify` fails on stale generated code. |
 | `api/app/server/` | Hand-written handlers: results retrieval, badge redirect, the signed-upload publish path, workflow verification, CDN purge. |
 | `api/app/generated/` | go-swagger output derived from the contract. `configure_scorecard.go` is hand-owned despite living here. |
-| `api/main.go` | Entry point. Builds as `scorecard-webapp` — see the note below. |
+| `api/main.go` | Entry point. Builds as `scorecard-api`. |
 | `api/initial-graft.md` | What the import brought across, what it could not, and why. |
 
 ## Build
@@ -29,7 +29,7 @@ that save you an hour.
 Run from the repository root:
 
 ```sh
-make api-build     # build the binary (api/scorecard-webapp)
+make api-build     # build the binary (api/scorecard-api)
 make api-swagger   # regenerate server and client from api/openapi.yaml
 make api-docker    # build the container image
 ```
@@ -45,14 +45,9 @@ build without them.
 For the deployment itself — the AWS serving environment, its OpenTofu, and the
 runbook — see [`deploy/api/README.md`](../deploy/api/README.md).
 
-## One thing that looks like a mistake and is not
+## Bucket URLs: no longer hardcoded
 
-**The binary is named `scorecard-webapp`** while this repository's own server
-binary is `scorecard-api` — which inverts what each one actually is. Renaming
-changes image contents, so it is deferred: it does nothing for the migration and
-costs a rebuild of the artifact every consumer is served from.
-
-The tree used to hardcode `gs://` bucket URLs, which was the other entry here.
-That is fixed — they are now `SCORECARD_RESULTS_BUCKET_URL` and
-`SCORECARD_CRON_RESULTS_BUCKET_URL`, defaulting to the values that had been
-compiled in, and the S3 driver is linked in alongside GCS.
+The tree used to hardcode `gs://` bucket URLs. That is fixed — they are now
+`SCORECARD_RESULTS_BUCKET_URL` and `SCORECARD_CRON_RESULTS_BUCKET_URL`,
+defaulting to the values that had been compiled in, and the S3 driver is linked
+in alongside GCS.
