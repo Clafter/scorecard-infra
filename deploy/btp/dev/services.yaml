@@ -1,0 +1,97 @@
+# BTP service instances for the scorecard-infra dev baseline.
+#
+# Reconciled by the BTP Service Operator (btp-manager) in kyma-system.
+# Each ServiceInstance maps 1:1 to a service-manager-created service
+# instance in the subaccount (I767568, 95c7cf5e-21b8-42c7-8bde-7e7c97f53aba,
+# eu10). Bindings in bindings.yaml, applied after this file by kustomize.
+
+# ---------------------------------------------------------------------
+# XSUAA — tenant authorization for the API. See design.md K5.
+# ---------------------------------------------------------------------
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceInstance
+metadata:
+  name: xsuaa
+  namespace: scorecard-infra-dev
+spec:
+  serviceOfferingName: xsuaa
+  servicePlanName: application
+  externalName: scorecard-infra-dev-xsuaa
+  parameters:
+    xsappname: scorecard-infra-dev
+    tenant-mode: dedicated
+    scopes:
+      - name: "$XSAPPNAME.admin"
+        description: "Write access to Scorecard API (POST uploads)."
+      - name: "$XSAPPNAME.read"
+        description: "Read access to Scorecard API."
+    role-templates:
+      - name: ScorecardAdmin
+        description: "Admin role: can POST results."
+        scope-references:
+          - "$XSAPPNAME.admin"
+          - "$XSAPPNAME.read"
+      - name: ScorecardReader
+        description: "Reader role: GET-only."
+        scope-references:
+          - "$XSAPPNAME.read"
+    role-collections:
+      - name: scorecard-infra-dev
+        description: "Default role collection for scorecard-infra dev."
+        role-template-references:
+          - "$XSAPPNAME.ScorecardAdmin"
+          - "$XSAPPNAME.ScorecardReader"
+---
+# ---------------------------------------------------------------------
+# Object Store — API uploads bucket. See design.md K4.
+# ---------------------------------------------------------------------
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceInstance
+metadata:
+  name: scorecard-api-results
+  namespace: scorecard-infra-dev
+spec:
+  serviceOfferingName: objectstore
+  servicePlanName: s3-standard
+  externalName: scorecard-infra-dev-api-results
+---
+# ---------------------------------------------------------------------
+# Object Store — cron producer output bucket. See design.md K4.
+# ---------------------------------------------------------------------
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceInstance
+metadata:
+  name: scorecard-cron-results
+  namespace: scorecard-infra-dev
+spec:
+  serviceOfferingName: objectstore
+  servicePlanName: s3-standard
+  externalName: scorecard-infra-dev-cron-results
+---
+# ---------------------------------------------------------------------
+# Alert Notification — baseline instance, subscribers come in
+# deploy-kyma-cron. See design.md K8.
+# ---------------------------------------------------------------------
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceInstance
+metadata:
+  name: alert-notification
+  namespace: scorecard-infra-dev
+spec:
+  serviceOfferingName: alert-notification
+  servicePlanName: free
+  externalName: scorecard-infra-dev-alert
+---
+# ---------------------------------------------------------------------
+# Cloud Logging — baseline instance, consumers come in deploy-kyma-api.
+# See design.md K8.
+# ---------------------------------------------------------------------
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceInstance
+metadata:
+  name: cloud-logging
+  namespace: scorecard-infra-dev
+spec:
+  serviceOfferingName: cloud-logging
+  servicePlanName: dev
+  externalName: scorecard-infra-dev-logging

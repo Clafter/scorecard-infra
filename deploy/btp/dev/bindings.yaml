@@ -1,0 +1,72 @@
+# BTP service bindings. The operator writes each binding's credentials
+# to the Kubernetes secret named in `secretName`; follow-up changes
+# (deploy-kyma-api, deploy-kyma-cron) consume these secrets via
+# envFrom.secretRef on their workloads. See design.md K6.
+
+# ---------------------------------------------------------------------
+# XSUAA binding — JWT verification keys + client credentials for the API.
+# ---------------------------------------------------------------------
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceBinding
+metadata:
+  name: xsuaa-binding
+  namespace: scorecard-infra-dev
+spec:
+  serviceInstanceName: xsuaa
+  externalName: scorecard-infra-dev-xsuaa-binding
+  secretName: xsuaa-binding
+---
+# ---------------------------------------------------------------------
+# Object Store (api-results) binding — S3 credentials for the API.
+# ---------------------------------------------------------------------
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceBinding
+metadata:
+  name: scorecard-api-results-binding
+  namespace: scorecard-infra-dev
+spec:
+  serviceInstanceName: scorecard-api-results
+  externalName: scorecard-infra-dev-api-results-binding
+  secretName: scorecard-api-results-binding
+---
+# ---------------------------------------------------------------------
+# Object Store (cron-results) binding — S3 credentials for the cron
+# producer pipeline.
+# ---------------------------------------------------------------------
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceBinding
+metadata:
+  name: scorecard-cron-results-binding
+  namespace: scorecard-infra-dev
+spec:
+  serviceInstanceName: scorecard-cron-results
+  externalName: scorecard-infra-dev-cron-results-binding
+  secretName: scorecard-cron-results-binding
+---
+# ---------------------------------------------------------------------
+# Alert Notification binding — API client credentials; subscribers wired
+# in deploy-kyma-cron.
+# ---------------------------------------------------------------------
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceBinding
+metadata:
+  name: alert-notification-binding
+  namespace: scorecard-infra-dev
+spec:
+  serviceInstanceName: alert-notification
+  externalName: scorecard-infra-dev-alert-binding
+  secretName: alert-notification-binding
+---
+# ---------------------------------------------------------------------
+# Cloud Logging binding — ingestion endpoint + credentials; consumers in
+# deploy-kyma-api.
+# ---------------------------------------------------------------------
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceBinding
+metadata:
+  name: cloud-logging-binding
+  namespace: scorecard-infra-dev
+spec:
+  serviceInstanceName: cloud-logging
+  externalName: scorecard-infra-dev-logging-binding
+  secretName: cloud-logging-binding
