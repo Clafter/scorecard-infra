@@ -132,21 +132,29 @@ A score is a **signal, not a verdict**: `-1` means inconclusive, never
 
 ## 6. Caching
 
-There are three independent layers; only the first two are active on BTP:
+Every GET response already carries cache headers (set by the API
+handlers, verified live through the Kyma ingress):
 
-- **CDN purge (disabled here).** Upstream, after writing a result the
-  worker asks a Fastly CDN to purge the stale copy
-  (`FASTLY_PURGE_TOKEN`). On BTP there is no Fastly, so the worker logs
+- `Cache-Control: max-age=600` — browsers/clients may reuse a result for
+  **10 minutes**.
+- `Surrogate-Control: max-age=31557600` + `Surrogate-Key` — directives
+  for a CDN/edge cache (Fastly-style) to hold the object for a year and
+  purge it by key.
+
+So read caching is **built in** at the HTTP layer; a result is cacheable
+the moment it is served. What is *not* wired on BTP:
+
+- **CDN purge on write (disabled).** Upstream, after writing a result the
+  worker asks Fastly to purge the stale copy (`FASTLY_PURGE_TOKEN`).
+  There is no Fastly here, so the worker logs
   `API result CDN purging disabled, FASTLY_PURGE_TOKEN not set` and skips
-  it — harmless; results are served straight from Object Store.
-- **Lazy bucket handle.** The API opens each blob bucket once, on the
-  first request, and reuses the handle (not a result cache — just the
-  connection).
-- **No result cache in front of the bucket.** Every GET reads the
-  object from Object Store. A result changes only when the cron run (or
-  a CI POST) overwrites `results.json`, so reads are always current.
-  (A CDN/edge cache is the upstream optimisation that a BTP-native
-  equivalent would add later — see §9.)
+  it — harmless, because no CDN is in front yet. The `Surrogate-*`
+  headers mean a CDN can be dropped in later with no code change.
+- **No server-side result cache.** The API has no in-memory cache in
+  front of Object Store; each uncached GET reads the object (the API
+  does keep the blob *bucket handle* open across requests — just the
+  connection, not the data). A result changes only when a cron run or a
+  CI POST overwrites `results.json`, so reads are always current.
 
 ---
 
@@ -174,7 +182,9 @@ CronJob controller ──(NATS publish)──▶ NATS broker ──(pull)──�
   against every repo in the shard, then writes the shard result, the raw
   result, and the **per-repo `api-results/.../results.json`** the API
   serves. Needs a GitHub token (`github` secret, user-provided) to query
-  repos. A request without its metadata marker is nacked (backstop).
+  repos. A request without its metadata marker is nacked (backstop). It
+  serves `net/http/pprof` on `:8080`; a **TCP liveness probe** on that
+  port restarts the pod if its HTTP loop deadlocks.
 
 To trigger a run without waiting for Monday:
 
@@ -203,26 +213,42 @@ workloads consume via `secretKeyRef`.
 
 ## 9. Open / future work
 
+**Recently hardened (this round, no user action needed):**
+- Worker now has a TCP **liveness probe** on `:8080` — a deadlocked
+  worker is restarted instead of silently consuming nothing.
+- Controller CronJob gained `activeDeadlineSeconds: 1800` (a run can't
+  hang forever holding the `Forbid` lock), `startingDeadlineSeconds: 3600`
+  (a missed window still starts within the hour), and job history limits.
+- Confirmed read caching is already in place (§6) — `Cache-Control` +
+  `Surrogate-*` headers on every GET, verified live.
+
+**Still open (each needs a decision, a credential, or a dependency bump
+— not doable unattended):**
 - **IAS / human login (OIDC `authorization_code`).** Deferred — needs an
   OIDC business-user trust configured in the BTP cockpit. CI's
   `client_credentials` path works; interactive human login does not yet.
 - **Per-bucket credentials (KA4).** Dev consolidated API + worker onto
   **one** results bucket + credential to exchange results. Production
   should restore separate api-results and cron-results buckets and give
-  the API a read credential for each (a small engine change, since
-  `blob.OpenBucket` is process-wide today).
-- **NATS durability.** Core NATS is at-most-once; a worker crash mid-scan
-  loses that request (the controller reruns weekly). JetStream (durable,
-  redelivering) would remove the metadata-ordering workaround entirely —
-  blocked on a JetStream-capable gocloud driver (a `gocloud.dev` bump).
-- **CDN / edge cache.** No Fastly on BTP; a BTP-native edge cache or
-  APIRule-level caching could cut Object Store reads on hot repos.
-- **Alert Notification + Cloud Logging wiring.** Instances exist; alert
-  rules and log dashboards are not yet configured.
-- **Custom domain / TLS.** Using the default `*.kyma.ondemand.com` host;
-  no custom domain.
-- **Prod scale.** Dev runs 1 worker replica, a raised-but-modest quota,
-  and a weekly schedule. Prod sizing (replicas, shard size, schedule) is
+  the API a read credential for each — a real engine change, since
+  `blob.OpenBucket` is process-wide today (one keypair per process).
+- **NATS durability.** Core NATS is at-most-once: if the controller
+  publishes while the worker is between `SynchronousPull` calls, that
+  request is missed (observed — the weekly rerun covers it). JetStream
+  (durable, redelivering) removes both this gap and the
+  metadata-ordering workaround, but needs a JetStream-capable gocloud
+  driver (a `gocloud.dev` bump) — too invasive to do unattended.
+- **Cloud Logging wiring.** The `cloud-logging` instance and its
+  `ingest-mtls-*` binding exist, but nothing ships pod logs to it: the
+  Kyma **Telemetry module is not installed** (only btp-operator,
+  api-gateway, istio are), and a privileged log-collector DaemonSet would
+  fight Kyma PodSecurity. Enabling the Telemetry module + a `LogPipeline`
+  is a cluster-level change for the cockpit/module owner.
+- **Alert Notification wiring.** Instance exists; alert rules not yet
+  configured.
+- **Custom domain / TLS.** Using the default `*.kyma.ondemand.com` host.
+- **Prod scale.** Dev runs 1 worker replica, a modest quota, and a
+  weekly schedule. Prod sizing (replicas, shard size, schedule) is
   untuned.
 - **`scorecard-webapp` binary name.** The API binary was renamed to
   `scorecard-api`; the deployed container/image name cleanup is its own

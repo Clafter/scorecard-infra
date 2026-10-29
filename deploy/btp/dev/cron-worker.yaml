@@ -48,6 +48,22 @@ spec:
           image: ghcr.io/clafter/scorecard-batch-worker:main
           args: ["--ignoreRuntimeErrors=true", "--config=/etc/scorecard/config.yaml"]
           imagePullPolicy: Always
+          ports:
+            # The worker serves net/http/pprof on 8080 (runtime profiles).
+            # Used only as a liveness signal here, not exposed by a Service.
+            - name: debug
+              containerPort: 8080
+          livenessProbe:
+            # TCP, not HTTP: the only handler is pprof, whose paths may
+            # change; a live TCP accept on 8080 proves the worker's HTTP
+            # goroutine (and thus the process) has not deadlocked. A hung
+            # worker is restarted instead of silently consuming nothing.
+            tcpSocket:
+              port: debug
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

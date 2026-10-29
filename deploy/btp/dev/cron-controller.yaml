@@ -18,8 +18,17 @@ spec:
   # 02:00 UTC on Monday, matching upstream.
   schedule: "0 2 * * 1"
   concurrencyPolicy: "Forbid"
+  # If the scheduler misses the window (controller-manager down, cluster
+  # asleep), still start within 1h rather than skipping the week.
+  startingDeadlineSeconds: 3600
+  # Keep a short history for debugging without piling up Jobs.
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      # A controller run only shards + publishes; it must not hang for
+      # hours holding the "Forbid" lock. Bound it to 30 min.
+      activeDeadlineSeconds: 1800
       template:
         metadata:
           annotations:
