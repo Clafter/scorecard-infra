@@ -1,5 +1,12 @@
 # BTP Deployment — Reproduction Guide
 
+> **Status: live in dev, end-to-end verified 2026-10-29.** A full scan of
+> `github.com/expressjs/express` is served over the public BTP endpoint
+> (`GET /projects/github.com/expressjs/express` → HTTP 200, score 7.9).
+> For the big-picture orientation — architecture, BTP compatibility
+> changes, API surface, caching, products in use, and open items — read
+> [`OVERVIEW.md`](OVERVIEW.md). This file is the step-by-step reproduction.
+
 Living record of everything done to deploy Scorecard on SAP BTP (Kyma),
 dev environment. Follow top-to-bottom to reproduce from scratch. Updated
 as work proceeds (golden rule 5).
@@ -160,18 +167,34 @@ prefix (`cron-bucket-prefix` engine change). All roles point at the one
 `api-results/`); one hard-scoped keypair writes them all, no collisions,
 no new entitlement (golden rules 1+2+3).
 
-**Live on the cluster (verified 2026-10-29):**
-- NATS broker 2/2, `/healthz` ok.
-- ConfigMap `scorecard-config` rendered from the binding secret, all
-  bucket URLs carry their prefix.
-- `scorecard-batch-controller` CronJob installed (Mon 02:00 UTC).
-- `scorecard-batch-worker` Deployment rolled out to **1/2** — the Istio
-  sidecar is ready; the worker container is in
-  `CreateContainerConfigError` with `secret "github" not found`. This is
-  the single remaining step, and it is the user's to do (the GitHub
-  token must not pass through the agent — credentials policy).
+**FULLY LIVE — end-to-end scan verified 2026-10-29.** A scan of
+`github.com/expressjs/express` is reachable over the public BTP endpoint:
+`GET /projects/github.com/expressjs/express` → HTTP 200, score 7.9,
+14 checks, engine scorecard v5.6.0 (latest and commit-pinned both 200).
 
-**The one manual step left:**
+Running workloads:
+- `scorecard-nats` 1/1 — in-cluster queue, kept out of the Istio mesh.
+- `scorecard-batch-controller` CronJob installed (Mon 02:00 UTC).
+- `scorecard-batch-worker` 1/1 — consumes from NATS, runs the engine,
+  writes `api-results/host/org/repo/results.json`.
+- `scorecard-api` 1/1 — serves results from the shared bucket+prefix.
+
+**Three fixes were needed to get the first scan through (full story in
+[`OVERVIEW.md`](OVERVIEW.md) §3–§4):**
+1. **Controller writes `.shard_metadata` before publishing**
+   (`controller-metadata-before-publish`). Core NATS is at-most-once, so
+   the worker's nack of a metadata-less request was a no-op and dropped
+   every request — no scan ran. Writing the marker first removes the race.
+2. **NATS out of the Istio mesh** (`cron-nats-istio.yaml` +
+   `sidecar.istio.io/inject: "false"`). NATS speaks first on connect,
+   which deadlocks against sidecar mTLS (worker → nats 4222 i/o timeout).
+3. **API + worker share one results bucket + credential**
+   (`api-deployment.yaml`). The worker writes to the cron bucket; a
+   separate api-results bucket would 403 the API's cross-bucket read
+   under hard credential isolation. Both now use the same bucket+prefix.
+
+**The one manual prerequisite (the user's to do — the GitHub token must
+not pass through the agent, credentials policy):**
 ```sh
 export KUBECONFIG=~/.kube/scorecard-infra/kubeconfig-kyma-dev.yaml
 kubectl -n scorecard-infra-dev create secret generic github \
@@ -179,7 +202,7 @@ kubectl -n scorecard-infra-dev create secret generic github \
   --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n scorecard-infra-dev rollout status deploy/scorecard-batch-worker
 ```
-Then trigger a run without waiting for Monday:
+Trigger a run without waiting for Monday:
 ```sh
 kubectl -n scorecard-infra-dev create job \
   --from=cronjob/scorecard-batch-controller cron-manual-$(date +%s)

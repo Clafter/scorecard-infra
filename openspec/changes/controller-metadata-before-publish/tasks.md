@@ -20,14 +20,20 @@
 
 ## 3. Verification (live)
 
-- [ ] 3.1 Rebuild + publish the controller image (CI).
-- [ ] 3.2 Trigger a one-repo run (github.com/expressjs/express); the
-      worker consumes without nacking.
-- [ ] 3.3 A scorecard result for expressjs/express lands in the bucket
-      under the api-results prefix.
-- [ ] 3.4 The live API serves that result over the BTP endpoint.
+- [x] 3.1 Rebuilt + published the controller image (CI, publish-images
+      run 40903028749 success).
+- [x] 3.2 Triggered a one-repo run (github.com/expressjs/express); the
+      worker consumed the request without nacking (log: "Running
+      Scorecard for repo: github.com/expressjs/express").
+- [x] 3.3 The scorecard result landed under
+      api-results/github.com/expressjs/express/results.json (and the
+      commit-pinned path) in the results bucket.
+- [x] 3.4 The live API serves it over the BTP endpoint: GET
+      /projects/github.com/expressjs/express -> HTTP 200, score 7.9,
+      14 checks, engine scorecard v5.6.0. Commit-pinned GET also 200.
 
 ## 4. Docs
 
 - [x] 4.1 Divergence + reason noted in `cron/README.md`.
-- [ ] 4.2 Update `deploy/btp/DEPLOYMENT.md` with the final working state.
+- [x] 4.2 Updated `deploy/btp/DEPLOYMENT.md` + added
+      `deploy/btp/OVERVIEW.md` with the final working state.
